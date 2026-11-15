@@ -11,12 +11,19 @@ import json
 from divination.iching import service as iching_service
 from divination.ganzhi import service as ganzhi_service
 from divination.meihua import service as meihua_service
+from divination import plugins
+
+import importlib
+import pkgutil
 
 _SERVICES = (iching_service, ganzhi_service, meihua_service)
 
 _HANDLERS: dict = {}
 for _module in _SERVICES:
     _HANDLERS.update(_module.COMMANDS)
+for _info in pkgutil.iter_modules(plugins.__path__, plugins.__name__ + "."):
+    _plugin = importlib.import_module(_info.name)
+    _HANDLERS.update(_plugin.COMMANDS)
 
 def handle(request_json: str) -> str:
     try:
