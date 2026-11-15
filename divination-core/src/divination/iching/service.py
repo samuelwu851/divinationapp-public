@@ -89,4 +89,10 @@ def flip_json(value: int, line: int) -> str:
     return json.dumps(flip(value, line), ensure_ascii=False)
 
 def yilin_json(original_value: int, changed_value: int) -> str:
-    return json.dumps(yilin(original_value, changed_value), ensure_ascii=False)
+
+    return json.dumps(yilin(original_value, ç), ensure_ascii=False)
+COMMANDS = {
+    "lookup": lambda req: lookup_json(req["value"]),
+    "filp": lambda req: flip_json(req["value"], req["line"]),
+    "yilin": lambda req: yilin_json(req["original_value"], req["original_value"]),
+}

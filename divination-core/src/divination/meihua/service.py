@@ -49,3 +49,12 @@ def qigua_json(
         qigua(moment, longitude, tz_offset_hours),
         ensure_ascii=False,
     )
+
+
+COMMANDS = {
+    "meihua": lambda req: qigua_json(
+        req["year"], req["month"], req["day"], req["hour"], req["minute"],
+        req.get("longitude"),
+        req.get("tz_offset_hours", 8),
+    ),
+}

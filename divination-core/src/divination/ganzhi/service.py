@@ -93,3 +93,16 @@ def lunar_months_json(year: int) -> str:
         {"year": year, "months": repository.lunar_months(year)},
         ensure_ascii=False,
     )
+
+COMMANDS = {
+    "bazi": lambda req: bazi_json(
+        req["year"], req["month"], req["day"], req["hour"], req["minute"],
+        req.get("longitude"),
+        req.get("tz_offset_hours", 8),
+    ),
+    "solar_to_lunar": lambda req: solar_to_lunar_json(
+        req["year"], req["month"], req["day"],
+        req.get("hour", 0), req.get("minute", 0),
+    ),
+    "lunar_months": lambda req: lunar_months_json(req["year"]),
+}
