@@ -125,3 +125,23 @@ def lunar_months(year: int) -> list[dict]:
         result.append({"month": number, "is_leap": leap,
                        "days": m.getDayCount(), "label": label})
     return result
+
+def _solar_to_datetime(s) -> datetime:
+    """
+        因为节气的时间在lunar_python中是solor
+    """
+    return datetime(s.getYear(), s.getMonth(), s.getDay(),
+                s.getHour(), s.getMinute(), s.getSecond())
+
+def get_pre_and_next_jie(time: datetime) -> tuple[datetime, datetime]:
+    lunar = _lunar(time)
+    pre = lunar.getPrevJie().getSolar()
+    nxt = lunar.getNextJie().getSolar()
+    return (_solar_to_datetime(pre), _solar_to_datetime(nxt))
+
+
+def jie_before(time: datetime) -> tuple[str, int]:
+    """time 前面最近的「节」：返回 (节名, 相隔天数)。用于「某节后第几天交运」。"""
+    jie = _lunar(time).getPrevJie()
+    jie_dt = _solar_to_datetime(jie.getSolar())
+    return jie.getName(), (time - jie_dt).days
