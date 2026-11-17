@@ -41,12 +41,21 @@ def dayun_ganzhi(year:TianGan, month:GanZhi, is_male:bool, count: int = 11) -> l
     return [GanZhi.from_index((month.index + step * i) % 60) for i in range(1, count)]
 
 def qiyun_age(delta: timedelta) -> tuple[int, int, int]:
-    """交节时间差 → 起运(岁, 月, 日)。三天折一岁；古法一年 360 日、一月 30 日，
-    即 1 实际日 = 120 起运日(= 4 个月)。"""
-    unit_days = delta.total_seconds() / 86400 * 120   # 实际天 → 起运日总量
-    years, rem = divmod(int(unit_days), 360)
-    months, days = divmod(rem, 30)
-    return years, months, days
+    """交节时间差 → 起运(岁, 月, 日)。古法口诀三条：
+        三天折一岁、一天折四月、一时辰(2 小时)折十天。
+    即 1 实际日 = 120 起运日(= 4 个月)、1 时辰 = 10 起运日；
+    古法一年 360 日、一月 30 日。
+
+    关键：按「整天 + 整时辰」离散取整，**不足一个时辰的零碎分秒舍去**。
+    这是传统排盘的通行口径——若改成按秒连续换算，零碎会被放大 120 倍，
+    一个多小时就能多算出 5 天起运。
+    """
+    days, rem = divmod(int(delta.total_seconds()), 86400)
+    shichen = rem // 7200                             # 余下秒折整时辰，不足一辰舍去
+    unit_days = days * 120 + shichen * 10             # 起运日总量
+    years, rem_units = divmod(unit_days, 360)
+    months, days_out = divmod(rem_units, 30)
+    return years, months, days_out
 
 def add_ymd(dt: datetime, years: int, months: int, days: int) -> datetime:
     """在日期上加「年、月、日」：先把年月累加进位、按月末钳日，最后加天。

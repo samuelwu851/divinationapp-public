@@ -38,7 +38,7 @@ struct GanZhiChar: View {
 }
 
 /// 四柱展示：四柱并排，每柱天干在上、地支在下，按五行上色。
-/// 梅花时间起卦、皇极经世共用。
+/// 时间起卦等多处共用。
 struct BaziPillarsView: View {
     let pillars: [String]          // [年柱, 月柱, 日柱, 时柱]，每柱两字
     var charFont: Font = .largeTitle

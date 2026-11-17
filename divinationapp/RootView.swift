@@ -3,10 +3,64 @@ import SwiftUI
 import AppKit
 #endif
 
-/// 根视图：默认进"易经速查"，右上角 ⋯ 菜单切换两个功能。
-/// 用 switch 选择页面——切走再切回"时间起卦"时会重建视图、@State 自动归零，
-/// 正好满足"每次进时间起卦都回到选时间页"。
-struct RootView: View {
+/// App 根视图：底部可横滑的「术数大类」切换栏（易经 / 八字…），默认进易经。
+/// 易经类内部的子术数（易经速查 / 时间起卦）仍用右上角 ⋯ 菜单切换。
+struct MainView: View {
+    enum Section: String, CaseIterable {
+        case iching = "易经"
+        case bazi   = "八字"
+    }
+
+    @State private var section: Section = .iching
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Group {
+                switch section {
+                case .iching: IChingHomeView()
+                case .bazi:   BaziView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+            bottomBar
+        }
+        .frame(minWidth: 480, minHeight: 520)   // 仅设很小的下限，允许自由缩放
+        .background(PatternBackground())          // 全 app 背景纹理
+        #if os(macOS)
+        .background(WindowConfigurator(width: 750, height: 820))
+        #endif
+    }
+
+    /// 底部大类切换栏：居中的圆角胶囊，宽度随术数个数自适应，当前项高亮。
+    private var bottomBar: some View {
+        HStack(spacing: 6) {
+            ForEach(Section.allCases, id: \.self) { s in
+                Button { section = s } label: {
+                    Text(s.rawValue)
+                        .font(.title3).bold()
+                        .foregroundStyle(section == s ? Color.white : .secondary)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 24)
+                        .background {
+                            if section == s { Capsule().fill(Color.accentColor) }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(5)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .overlay(Capsule().stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)   // 整条胶囊水平居中
+    }
+}
+
+/// 易经类主页：默认进「易经速查」，右上角 ⋯ 菜单切换易经类各子术数。
+/// 用 switch 选择页面——切走再切回「时间起卦」时会重建视图、@State 自动归零。
+struct IChingHomeView: View {
     enum Page: String, CaseIterable {
         case iching  = "易经速查"
         case time    = "时间起卦"
@@ -22,8 +76,7 @@ struct RootView: View {
                 case .time:    TimeDivinationView()
                 }
             }
-            .frame(minWidth: 480, minHeight: 520)   // 仅设一个很小的下限，允许自由缩放
-            .background(PatternBackground())         // 全 app 背景纹理
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -36,10 +89,6 @@ struct RootView: View {
                 }
             }
         }
-        #if os(macOS)
-        // macOS：每次启动都用默认大小、不记住上次
-        .background(WindowConfigurator(width: 1000, height: 820))
-        #endif
     }
 }
 

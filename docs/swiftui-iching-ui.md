@@ -160,3 +160,94 @@ Text(hex.name)
 
 **一句话**：界面点击 → 回调到 store 方法 → store 调后端拿数据、更新自己的属性 →
 `@Observable` 让界面自动刷新。你只需维护"状态"和"怎么显示状态"，不用手动刷界面。
+
+---
+
+## 9. 坑：`LazyVGrid` 里别用「数量会变的 `ForEach(0..<n)`」——翻月会错位
+
+> 实战记录。出在一个「月历视图」上：按公历月铺一张日历网格，可以翻到上/下个月。
+
+**现象**：月历首次打开那个月是对的，**翻到别的月份后月初就错位**（1 号落错列、前几天挤在一起），而且每个月错的样子还不一样；但从第二周往后又是对的。
+
+**踩坑的写法**：月初要按"1 号是星期几"留几个空格，当时这么写——
+```swift
+LazyVGrid(columns: cols, spacing: 4) {
+    ForEach(0..<leadingBlanks(month), id: \.self) { _ in   // ← 空格数会随月份变
+        Color.clear.frame(height: 62)
+    }
+    ForEach(month.days) { day in DayCellView(day: day) … }
+}
+```
+**原因**：`ForEach(0..<n)` 这种"整数区间"形式是给**固定数量**用的。`n`（前导空格数）
+随翻月变化时，`LazyVGrid` 不会可靠地重算这段空格 → 空格数停留在旧值 → 后面所有日期
+整体移位，月初就对不上星期列。加不加 `id: \.self` 都不保险。
+
+**修法**：别单独用一个"动态数量的 ForEach"画空格。把**空格 + 各天合并成一个数组**，
+每个格子带**稳定的"位置 id"**，用**一个** `ForEach` 画完：
+```swift
+private struct GridSlot: Identifiable {
+    let id: Int               // 格子在网格中的位置（稳定）
+    let day: DayData?         // nil = 月初前导空格
+}
+private func gridSlots(_ m: MonthData) -> [GridSlot] {
+    let lead = m.days.first?.weekday ?? 0          // 1 号星期 = 前面留几个空格
+    var slots = (0..<lead).map { GridSlot(id: $0, day: nil) }
+    for (offset, day) in m.days.enumerated() {
+        slots.append(GridSlot(id: lead + offset, day: day))
+    }
+    return slots
+}
+// body:
+ForEach(gridSlots(month)) { slot in
+    if let day = slot.day { DayCellView(day: day) … } else { Color.clear.frame(height: 62) }
+}
+```
+翻到任何月份，数组整体换新、每个格子按位置 id 稳定更新，不再错位。
+
+**通用教训**：`ForEach(0..<n)` 只配**常量** `n`。数量会变时，一律改成「**遍历一个带稳定
+`id` 的数组**」。这和第 6 节"每项自管 `@State`"是同一类问题——**身份（identity）要稳定**，
+SwiftUI 才能正确 diff。
+
+**怎么定位的（排查方法也值得记）**：按"数据 → 静态渲染 → 更新"三段切开，逐段证伪：
+1. 在 App 真实运行环境用 `RunCodeSnippet` 跑嵌入式 Python，确认**后端数据是对的**（星期没算错）；
+2. 用 `#Preview` 喂正确数据给那个网格视图，确认**静态渲染是对的**；
+3. 剩下只有"翻月更新"这一段 → 锁定到动态 `ForEach`。
+数据对、静态对、只在交互后错 → 几乎都是 **SwiftUI 的 identity/更新** 问题。
+
+---
+
+## 10. 八字数据流（谁调谁）
+
+八字对应 `BaziView.swift`（输入页）、`BaziChartView.swift`（结果页）、`BaziChart.swift`（解码模型）。
+整条链和易经一样，界面从不直接碰 Python，都经过 `DivinationClient`。
+
+**谁调后端** —— 八字有两处会请求后端，都走同一条「下水道」：
+
+```
+① 点「开始排盘」
+BaziView.paipan() → client.baziChart(...)          // cmd: bazi_chart
+② 点某个流年
+BaziChartView.loadLiuyue(年) → client.baziLiuyue(...) // cmd: liuyue
+
+两者之后都是：
+DivinationClient.send(拼JSON) → engine.dispatch → py_dispatch(C桥)
+    → Python divination.api.handle 按 cmd 分发 → bazi 服务
+```
+
+**谁调结果页** —— `BaziView` 用 `navigationDestination` 把 `BaziChartView` **推成新页面**：
+
+```
+paipan() 拿到 chart → showChart = true
+  → .navigationDestination(isPresented: $showChart) { BaziChartView(...) }
+```
+
+**整体导航**（底部大类切换，与易经类并列）：
+
+```
+MainView（底部胶囊栏：易经 / 八字）
+├─ 易经 → IChingHomeView（内部再用右上角 ⋯ 切 易经速查/时间起卦）
+└─ 八字 → BaziView（输入） ──排盘──▶ BaziChartView（结果：流月|流年|大运 ┊ 四柱）
+```
+
+**一个复用点**：四柱/大运/流年/流月的干支上色，统一用 `WuXing.swift` 里的
+`GanZhiChar`（按单字五行取色）——八字、时间起卦共用同一套配色，不各写各的。

@@ -10,7 +10,8 @@ struct WheelPicker: View {
     @Binding var selection: Int
 
     var visibleRows: Int = 5                    // 可见行数(奇数，中间为选中)；3=上下各一格
-    private let rowHeight: CGFloat = 36
+    var valueFont: Font = .title3               // 每行数值字号（可调大，便于老年用户）
+    var rowHeight: CGFloat = 36
 
     @State private var scrolledID: Int?
 
@@ -22,7 +23,7 @@ struct WheelPicker: View {
                 LazyVStack(spacing: 0) {
                     ForEach(values, id: \.self) { v in
                         Text(format(v))
-                            .font(.title3)
+                            .font(valueFont)
                             .frame(maxWidth: .infinity)
                             .frame(height: rowHeight)
                             .foregroundStyle(v == selection ? Color.primary : .secondary)

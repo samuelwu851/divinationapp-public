@@ -32,3 +32,10 @@ venv/
 # ───────── 嵌入的 Python 运行时（体积大的二进制，不进仓库）─────────
 # 从 beeware/Python-Apple-support releases 下载，见 README
 Frameworks/
+
+# ───────── 内部版专属（不进公开仓库）─────────
+# 这两条只对「尚未被跟踪」的文件生效，所以两个分支的行为正好相反、各自都对：
+#   · public  分支：它们未被跟踪 → 被忽略，git add -A / git add . 不会误加
+#   · private 分支：它们已被跟踪 → .gitignore 管不到已跟踪文件，照常版本管理
+divination-core/src/divination/plugins/huangji/
+divinationapp/HuangjiView.swift

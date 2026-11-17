@@ -60,6 +60,20 @@ struct DivinationClient {
                      "day": day, "hour": hour, "minute": minute]))
     }
 
+    /// 八字全盘：四柱(十神/藏干/纳音) + 大运（每步内嵌 10 流年）。
+    func baziChart(year: Int, month: Int, day: Int, hour: Int, minute: Int,
+                   isMale: Bool) -> BaziChart? {
+        decode(send(["cmd": "bazi_chart", "year": year, "month": month, "day": day,
+                     "hour": hour, "minute": minute, "is_male": isMale]))
+    }
+
+    /// 某流年的 12 流月（相对命主日主的十神）。
+    func baziLiuyue(year: Int, month: Int, day: Int, hour: Int, minute: Int,
+                    targetYear: Int) -> BaziLiuYueResult? {
+        decode(send(["cmd": "liuyue", "year": year, "month": month, "day": day,
+                     "hour": hour, "minute": minute, "target_year": targetYear]))
+    }
+
     func yilin(org: Int, chg: Int) -> String? {
         let r: YilinResult? = decode(send(["cmd": "yilin", "org_value": org, "chg_value": chg]))
         return r?.text
