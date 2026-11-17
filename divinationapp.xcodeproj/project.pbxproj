@@ -86,6 +86,7 @@
 				228534CA30707D4C0012E7BC /* Frameworks */,
 				228534CB30707D4C0012E7BC /* Resources */,
 				229988A63073618E0075E504 /* Embed Frameworks */,
+				2224E4C530ABF58800B66E5E /* ShellScript */,
 				229988D33073C1150075E504 /* copy python package */,
 			);
 			buildRules = (
@@ -147,6 +148,24 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		2224E4C530ABF58800B66E5E /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Type a script or drag a script file from your workspace to insert its path.\n\"${SRCROOT}/scripts/trim_python.sh\"\n";
+		};
 		229988D33073C1150075E504 /* copy python package */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
