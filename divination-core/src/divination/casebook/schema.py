@@ -1,0 +1,109 @@
+"""案例库的表结构。
+
+MIGRATIONS[i] 是"从版本 i 升到版本 i+1"要执行的 SQL。
+已经发布过的条目永远不改，只在末尾追加新版本。
+"""
+
+SCHEMA_V1 = """
+-- 案主：一个案主名下可以有多份笔记
+CREATE TABLE subjects (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    remark     TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT                                  -- 预留给回收站，暂不使用
+);
+
+-- 笔记：正文为 markdown，图片和排盘在正文里用引用标记表示
+CREATE TABLE notes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+    title      TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT                                  -- 预留给回收站，暂不使用
+);
+CREATE INDEX idx_notes_subject ON notes(subject_id);
+
+-- 笔记手动标注的术数（用于没有排盘的随笔）
+-- 笔记最终涉及的术数 = 这里手动标的 ∪ charts 里排盘的 type
+CREATE TABLE note_types (
+    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    type    TEXT NOT NULL,                           -- 取值同 charts.type
+    PRIMARY KEY (type, note_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_note_types_note ON note_types(note_id);
+
+-- 排盘：每份笔记里的盘独立一份，存入后不再修改
+CREATE TABLE charts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id       INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    type          TEXT NOT NULL,                     -- bazi / iching / liuren ...
+    title         TEXT NOT NULL DEFAULT '',          -- 可不填，如卦的所问之事
+    params_json   TEXT NOT NULL,                     -- 排盘请求原样
+    snapshot_json TEXT NOT NULL,                     -- 排盘结果原样
+    algo_version  TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_charts_note ON charts(note_id);
+
+-- 排盘的可检索特征：由各术数的拆特征函数生成，可随时重建
+CREATE TABLE chart_facts (
+    chart_id INTEGER NOT NULL REFERENCES charts(id) ON DELETE CASCADE,
+    type     TEXT NOT NULL,
+    key      TEXT NOT NULL,
+    value    TEXT NOT NULL,
+    PRIMARY KEY (type, key, value, chart_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_facts_chart ON chart_facts(chart_id);
+
+-- 图片记录：文件本身存在磁盘上，这里只记文件名
+CREATE TABLE attachments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id       INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    filename      TEXT NOT NULL UNIQUE,              -- 程序生成的唯一文件名
+    original_name TEXT NOT NULL DEFAULT '',          -- 用户原文件名，仅供显示
+    width         INTEGER,
+    height        INTEGER,
+    byte_size     INTEGER,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_attachments_note ON attachments(note_id);
+
+-- 标签：笔记和排盘共用同一份清单(用于记录这个笔记或者排盘是用来干什么的，比如疾病、感情之类)
+CREATE TABLE labels (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE note_labels (
+    note_id  INTEGER NOT NULL REFERENCES notes(id)  ON DELETE CASCADE,
+    label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    PRIMARY KEY (label_id, note_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_note_labels_note ON note_labels(note_id);
+
+CREATE TABLE chart_labels (
+    chart_id INTEGER NOT NULL REFERENCES charts(id) ON DELETE CASCADE,
+    label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    PRIMARY KEY (label_id, chart_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_chart_labels_chart ON chart_labels(chart_id);
+
+-- 特点：只贴在排盘上，手动记录这个盘有什么特别之处（如从格、伤官见官）
+CREATE TABLE tags (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE chart_tags (
+    chart_id INTEGER NOT NULL REFERENCES charts(id) ON DELETE CASCADE,
+    tag_id   INTEGER NOT NULL REFERENCES tags(id)   ON DELETE CASCADE,
+    PRIMARY KEY (tag_id, chart_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_chart_tags_chart ON chart_tags(chart_id);
+"""
+
+MIGRATIONS = [SCHEMA_V1]

@@ -12,12 +12,13 @@ from divination.iching import service as iching_service
 from divination.ganzhi import service as ganzhi_service
 from divination.meihua import service as meihua_service
 from divination.bazi import service as bazi_service
+from divination.casebook import service as casebook_service
 from divination import plugins
 
 import importlib
 import pkgutil
 
-_SERVICES = (iching_service, ganzhi_service, meihua_service, bazi_service)
+_SERVICES = (iching_service, ganzhi_service, meihua_service, bazi_service, casebook_service)
 
 _HANDLERS: dict = {}
 for _module in _SERVICES:
