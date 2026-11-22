@@ -15,17 +15,28 @@ CREATE TABLE subjects (
     deleted_at TEXT                                  -- 预留给回收站，暂不使用
 );
 
--- 笔记：正文为 markdown，图片和排盘在正文里用引用标记表示
+-- 笔记：正文 body 是编辑器(TipTap)的 JSON 文档，图片和排盘是其中的节点；
+-- body_text 是后端从 body 里抽出的纯文字，给列表预览和搜索用（由后端维护，前端不用管）
 CREATE TABLE notes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
     title      TEXT NOT NULL DEFAULT '',
     body       TEXT NOT NULL DEFAULT '',
+    body_text  TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     deleted_at TEXT                                  -- 预留给回收站，暂不使用
 );
-CREATE INDEX idx_notes_subject ON notes(subject_id);
+
+
+-- notes 和 subjects 的对应关系，一个note可以有多个案主，一个案主也可以有多个notes
+CREATE TABLE notes_subjects(
+    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+    PRIMARY KEY (subject_id, note_id)
+) WITHOUT ROWID;
+CREATE INDEX idx_note_subjects_note ON notes_subjects(note_id);
+
+
 
 -- 笔记手动标注的术数（用于没有排盘的随笔）
 -- 笔记最终涉及的术数 = 这里手动标的 ∪ charts 里排盘的 type
@@ -104,6 +115,11 @@ CREATE TABLE chart_tags (
     PRIMARY KEY (tag_id, chart_id)
 ) WITHOUT ROWID;
 CREATE INDEX idx_chart_tags_chart ON chart_tags(chart_id);
+
+
 """
+
+
+
 
 MIGRATIONS = [SCHEMA_V1]

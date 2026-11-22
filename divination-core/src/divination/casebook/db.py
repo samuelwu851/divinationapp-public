@@ -1,13 +1,19 @@
 """案例库的数据库连接：打开文件、建表、按版本升级。"""
+import os
 import sqlite3
 
 from divination.casebook.schema import MIGRATIONS
 
 _conn = None
+_attachments_dir = None
 
 
 def init(path: str) -> None:
-    global _conn
+    global _conn, _attachments_dir
+    # 图片放在数据库旁边的文件夹：casebook-debug.db → casebook-debug-attachments/
+    # 调试库和正式库各用各的，互不干扰
+    stem = os.path.splitext(os.path.basename(path))[0]
+    _attachments_dir = os.path.join(os.path.dirname(os.path.abspath(path)), f"{stem}-attachments")
     # 1. 打开连接
     conn = sqlite3.connect(path)
     # 2. 设置 row_factory
@@ -29,3 +35,10 @@ def get() -> sqlite3.Connection:
     if _conn is None:
         raise RuntimeError("database has not init yet")
     return _conn
+
+
+def attachments_dir() -> str:
+    """图片文件夹的路径（不保证已存在，写文件前自己建）。"""
+    if _attachments_dir is None:
+        raise RuntimeError("database has not init yet")
+    return _attachments_dir
