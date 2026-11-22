@@ -91,6 +91,95 @@ struct DivinationClient {
         return r?.months
     }
 
+    // MARK: - 案例库（笔记）
+
+    /// 打开/初始化案例库数据库（建表、迁移）。App 启动时调用一次。
+    /// 返回图片文件夹路径（编辑器显示图片用）；失败返回 nil。
+    @discardableResult
+    func casebookOpen(path: String) -> String? {
+        let r: CasebookOpenResult? = decode(send(["cmd": "casebook_open", "path": path]))
+        return r?.ok == true ? r?.attachmentsDir : nil
+    }
+
+    /// 所有笔记（按更新时间倒序，含正文预览）。
+    func noteList() -> [Note] {
+        let r: NoteListResult? = decode(send(["cmd": "note_list"]))
+        return r?.notes ?? []
+    }
+
+    func noteGet(id: Int) -> Note? {
+        decode(send(["cmd": "note_get", "note_id": id]))
+    }
+
+    @discardableResult
+    func noteCreate(title: String, body: String, subjectIds: [Int] = []) -> Note? {
+        decode(send(["cmd": "note_create", "title": title, "body": body, "subject_ids": subjectIds]))
+    }
+
+    /// 案主模糊搜索（写笔记时输入框下拉用）。
+    func subjectSearch(keyword: String) -> [Subject] {
+        let r: SubjectSearchResult? = decode(send(["cmd": "subject_search", "keyword": keyword]))
+        return r?.subjects ?? []
+    }
+
+    /// 新建案主。
+    @discardableResult
+    func subjectCreate(name: String, remark: String = "") -> Subject? {
+        decode(send(["cmd": "subject_create", "name": name, "remark": remark]))
+    }
+
+    /// 给已有笔记添加一个案主（重复添加不报错），返回更新后的笔记。
+    @discardableResult
+    func noteSubjectAdd(noteId: Int, subjectId: Int) -> Note? {
+        decode(send(["cmd": "note_subject_add", "note_id": noteId, "subject_id": subjectId]))
+    }
+
+    /// 从某笔记移除一个案主关联，返回更新后的笔记。
+    @discardableResult
+    func noteSubjectRemove(noteId: Int, subjectId: Int) -> Note? {
+        decode(send(["cmd": "note_subject_remove", "note_id": noteId, "subject_id": subjectId]))
+    }
+
+    @discardableResult
+    func noteUpdate(id: Int, title: String, body: String) -> Note? {
+        decode(send(["cmd": "note_update", "note_id": id, "title": title, "body": body]))
+    }
+
+    @discardableResult
+    func noteDelete(id: Int) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "note_delete", "note_id": id]))
+        return r?.ok ?? false
+    }
+
+    /// 清理笔记里「已保存正文」没引用的排盘和图片（编辑器关闭时调用）。
+    func noteCleanup(id: Int) {
+        _ = send(["cmd": "note_cleanup", "note_id": id])
+    }
+
+    /// 按参数排盘并存进笔记（type: bazi / iching / meihua），返回排盘 id。
+    func chartCreate(noteId: Int, type: String, params: [String: Any]) -> Int? {
+        let r: ChartRef? = decode(send(["cmd": "chart_create", "note_id": noteId, "type": type, "params": params]))
+        return r?.id
+    }
+
+    /// 取出一个已存的排盘（含快照），交给 ChartDetailView 解码。
+    func chartGet(id: Int) -> Data? {
+        guard let json = send(["cmd": "chart_get", "chart_id": id]) else { return nil }
+        return Data(json.utf8)
+    }
+
+    /// 翻某一爻，返回新卦。
+    func flip(value: Int, line: Int) -> Hexagram? {
+        decode(send(["cmd": "flip", "value": value, "line": line]))
+    }
+
+    /// 原样转发一条命令，返回后端的 JSON 字符串（编辑器网页通过它调后端）。
+    func dispatchRaw(cmd: String, params: [String: Any]) -> String? {
+        var req = params
+        req["cmd"] = cmd
+        return send(req)
+    }
+
     // MARK: - 私有：发请求 + 泛型解码
 
     private func send(_ request: [String: Any]) -> String? {

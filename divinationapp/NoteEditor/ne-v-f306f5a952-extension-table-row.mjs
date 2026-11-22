@@ -1,0 +1,2 @@
+/* esm.sh - @tiptap/extension-table-row@2.27.3 */
+import{Node as e,mergeAttributes as r}from"./ne-v-516ab8cd31-core-2-27-3.mjs";var o=e.create({name:"tableRow",addOptions(){return{HTMLAttributes:{}}},content:"(tableCell | tableHeader)*",tableRole:"row",parseHTML(){return[{tag:"tr"}]},renderHTML({HTMLAttributes:t}){return["tr",r(this.options.HTMLAttributes,t),0]}});export{o as TableRow,o as default};

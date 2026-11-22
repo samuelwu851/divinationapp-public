@@ -25,7 +25,7 @@ final class CasebookWindowManager {
 
     private let snapTrigger: CGFloat = 16         // 很贴近才吸附
     private let detachDist: CGFloat = 48          // 吸住后要拉这么远才松开
-    private let defaultNotesWidth: CGFloat = 432
+    private let defaultNotesWidth: CGFloat = 518
 
     func registerMain(_ w: NSWindow) {
         guard main !== w else { return }

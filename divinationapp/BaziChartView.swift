@@ -66,8 +66,8 @@ struct BaziChartView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                if !name.isEmpty { Text(name).font(.title).bold() }
-                Text(chart.gender).font(.title2)
+                if !name.isEmpty { Text(name).font(.largeTitle).bold() }
+                Text(chart.gender).font(.title)
             }
             Text("公历：\(chart.inputTime)").font(.title2).foregroundStyle(.primary)
             Text("农历：\(chart.lunarTime)").font(.title2).foregroundStyle(.primary)

@@ -13,13 +13,59 @@ struct divinationappApp: App {
     init() {
         Self.bootstrapPython()
         Self.testDispatch()        // 里程碑 1 自检（走通用分发器）
+        Self.openCasebook()        // 打开案例库数据库
     }
 
     var body: some Scene {
         WindowGroup {
             MainView()
         }
-        .defaultSize(width: 750, height: 820)   // 打开时的大小；切换页面不随内容变化
+        .defaultSize(width: 625, height: 780)   // 打开时的大小；切换页面不随内容变化
+
+        #if os(macOS)
+        // 笔记（案例库）独立窗口：独立的关闭/最大化，点右下角笔记本图标打开。
+        Window("笔记", id: "notes") {
+            NotesWindowView()
+        }
+        .defaultSize(width: 518, height: 780)
+
+        // 笔记里点开的排盘：普通窗口（不挡住笔记，可拖动、缩放）。
+        // 按排盘 id 区分：同一个排盘再点一次只会把已开的窗口提到前面。
+        WindowGroup("排盘", id: "chart", for: Int.self) { $chartId in
+            if let chartId {
+                ChartDetailView(client: DivinationClient(), chartId: chartId, inWindow: true)
+            }
+        }
+        .defaultSize(width: 760, height: 780)
+        .restorationBehavior(.disabled)           // 重启 App 不自动恢复这些窗口
+        #endif
+    }
+
+    /// 打开案例库 SQLite：调试用 casebook-debug.db，发行用 casebook.db，
+    /// 都放在 Application Support/divination/ 下。
+    private static func openCasebook() {
+        let fm = FileManager.default
+        guard let appSupport = try? fm.url(for: .applicationSupportDirectory,
+                                           in: .userDomainMask,
+                                           appropriateFor: nil, create: true) else {
+            print("找不到 Application Support 目录"); return
+        }
+        let dir = appSupport.appendingPathComponent("divination", isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        #if DEBUG
+        let dbName = "casebook-debug.db"
+        #else
+        let dbName = "casebook.db"
+        #endif
+        let path = dir.appendingPathComponent(dbName).path
+
+        if let dir = DivinationClient().casebookOpen(path: path) {
+            CasebookPaths.attachmentsDir = URL(fileURLWithPath: dir, isDirectory: true)
+            print("✅ casebook 打开：\(path)")
+        } else {
+            print("❌ casebook 打开失败：\(path)")
+        }
     }
 
     /// 在 app 启动时初始化嵌入的 Python 解释器，并把我们的包目录加入搜索路径。

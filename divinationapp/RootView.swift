@@ -12,6 +12,9 @@ struct MainView: View {
     }
 
     @State private var section: Section = .iching
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,12 +27,30 @@ struct MainView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
-            bottomBar
+            ZStack {
+                bottomBar                           // 居中胶囊切换栏
+                HStack {                            // 右下角：笔记本图标（在胶囊之外）
+                    Spacer()
+                    Button { openNotes() } label: {
+                        NotebookIcon(color: .secondary)
+                            .frame(width: 26, height: 26)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 18)
+                }
+            }
         }
         .frame(minWidth: 480, minHeight: 520)   // 仅设很小的下限，允许自由缩放
         .background(PatternBackground())          // 全 app 背景纹理
         #if os(macOS)
-        .background(WindowConfigurator(width: 750, height: 820))
+        .background(WindowConfigurator(width: 625, height: 780))
+        #endif
+    }
+
+    /// 打开笔记（案例库）独立窗口。
+    private func openNotes() {
+        #if os(macOS)
+        openWindow(id: "notes")
         #endif
     }
 
@@ -105,6 +126,7 @@ private struct WindowConfigurator: NSViewRepresentable {
             window.isRestorable = false                                  // 不保存/恢复窗口状态
             window.setContentSize(NSSize(width: width, height: height))  // 每次启动设回默认大小
             window.center()
+            CasebookWindowManager.shared.registerMain(window)            // 供笔记窗跟随
         }
         return view
     }

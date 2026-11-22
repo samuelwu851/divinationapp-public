@@ -30,7 +30,9 @@ struct ContentView: View {
                 }
             }
             .padding(40)
+            .frame(maxWidth: .infinity)     // 内容区占满宽度，居中不随滚动条增减而左右跳动
         }
+        .scrollIndicators(.never)           // 不显示竖滚动条 → 拉高时不再左右抖动
         .onAppear { store.load() }
     }
 }

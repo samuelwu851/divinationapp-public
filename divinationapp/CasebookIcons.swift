@@ -52,8 +52,8 @@ struct PenIcon: View {
             body.addLine(to: P(10, 17))  // 下棱回来
             body.addLine(to: P(18, 9))   // 下棱到顶端右
             body.closeSubpath()          // 顶端封口
-            ctx.stroke(body, with: .color(color), lineWidth: lineWidth,
-                       style: StrokeStyle(lineJoin: .round))
+            ctx.stroke(body, with: .color(color),
+                       style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round))
 
             // 笔尖处的「笔箍」横线
             var collar = Path(); collar.move(to: P(7, 14)); collar.addLine(to: P(10, 17))

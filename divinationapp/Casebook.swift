@@ -33,7 +33,23 @@ struct SubjectSearchResult: Codable {
     let subjects: [Subject]
 }
 
-/// 通用 {"ok": true} 响应（casebook_open / note_delete）。
+/// 通用 {"ok": true} 响应（note_delete）。
 struct OkResult: Codable {
     let ok: Bool
+}
+
+/// casebook_open 的响应：{"ok": true, "attachments_dir": "..."}。
+struct CasebookOpenResult: Codable {
+    let ok: Bool
+    let attachmentsDir: String?
+}
+
+/// chart_create 的响应里只取 id。
+struct ChartRef: Codable {
+    let id: Int
+}
+
+/// 案例库的路径：App 启动打开数据库后填入，编辑器读图片时用。
+enum CasebookPaths {
+    static var attachmentsDir: URL?
 }
