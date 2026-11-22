@@ -182,7 +182,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\n\n# 1) 拷贝内核包 divination\nSRC=\"${SRCROOT}/divination-core/src/divination\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/divination\"\nrm -rf \"$DST\"\nmkdir -p \"$(dirname \"$DST\")\"\ncp -R \"$SRC\" \"$DST\"\nfind \"$DST\" -name '__pycache__' -type d -prune -exec rm -rf {} +\n\n# 2) 拷贝第三方库 lunar_python\nLUNAR_SRC=\"${SRCROOT}/divination-core/vendor/lunar_python\"\nLUNAR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/lunar_python\"\nrm -rf \"$LUNAR_DST\"\ncp -R \"$LUNAR_SRC\" \"$LUNAR_DST\"\nfind \"$LUNAR_DST\" -name '__pycache__' -type d -prune -exec rm -rf {} +\n\n";
+			shellScript = "set -e\n\n# 1) 拷贝内核包 divination\nSRC=\"${SRCROOT}/divination-core/src/divination\"\nDST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/divination\"\nrm -rf \"$DST\"\nmkdir -p \"$(dirname \"$DST\")\"\ncp -R \"$SRC\" \"$DST\"\nfind \"$DST\" -name '__pycache__' -type d -prune -exec rm -rf {} +\n\n# 皇极经世只打进内部版（编译条件含 INTERNAL，同 Swift 的 #if INTERNAL）；\n# 其他构建（public、App Store 的 Release）一律剔除，不依赖本地目录是否干净\ncase \" ${SWIFT_ACTIVE_COMPILATION_CONDITIONS:-} \" in\n  *\" INTERNAL \"*) echo \"copy python package: 内部版，保留 plugins/huangji\" ;;\n  *) rm -rf \"$DST/plugins/huangji\" ;;\nesac\n\n# 2) 拷贝第三方库 lunar_python\nLUNAR_SRC=\"${SRCROOT}/divination-core/vendor/lunar_python\"\nLUNAR_DST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/lunar_python\"\nrm -rf \"$LUNAR_DST\"\ncp -R \"$LUNAR_SRC\" \"$LUNAR_DST\"\nfind \"$LUNAR_DST\" -name '__pycache__' -type d -prune -exec rm -rf {} +\n\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
