@@ -27,23 +27,26 @@
   body { padding: 0 20px 40px; }
 
   /* ---------- 工具栏 ---------- */
-  .toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-    padding: 6px 8px; margin: 0 -8px; border-radius: 10px; background: rgba(233, 231, 226, 0.92);
+  .toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 0;
+    padding: 6px 6px; margin: 0 -8px; border-radius: 10px; background: rgba(233, 231, 226, 0.92);
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); border: 1px solid var(--stroke); }
   .toolbar button, .toolbar select { font: 15px -apple-system, "PingFang SC", sans-serif; color: var(--fg);
-    background: none; border: 0; border-radius: 6px; padding: 4px 9px; cursor: default; min-width: 30px; height: 30px; }
+    background: none; border: 0; border-radius: 6px; padding: 4px 5px; cursor: default; min-width: 28px; height: 30px;
+    white-space: nowrap; }
   .toolbar button:hover, .toolbar select:hover { background: var(--fill); }
   .toolbar button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
-  .toolbar .sep { width: 1px; height: 18px; background: var(--stroke); margin: 0 4px; }
-  .toolbar .group { display: none; align-items: center; gap: 2px; }
-  .toolbar .group.show { display: flex; }
+  .toolbar .sep { width: 1px; height: 18px; background: var(--stroke); margin: 0 2px; }
+  /* 默认窗口宽度（518）下整条工具栏要放进一行：下拉框定宽，按钮内边距收紧 */
+  #block-type { width: 62px; }
+  #table-ops { width: 58px; }
   .swatch-btn { display: inline-flex; align-items: center; gap: 4px; }
   .swatch-btn .bar { display: inline-block; width: 14px; height: 3px; border-radius: 2px; background: var(--fg); }
-  .palette { position: absolute; top: 40px; display: none; gap: 6px; padding: 8px; border-radius: 10px; background: #fff;
+  .palette { position: absolute; top: 40px; right: 0; display: none; align-items: center; gap: 6px; padding: 8px;
+    white-space: nowrap; border-radius: 10px; background: #fff;
     border: 1px solid var(--stroke); box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 10; }
   .palette.show { display: flex; }
-  .palette button { width: 22px; height: 22px; min-width: 0; padding: 0; border-radius: 50%; border: 1px solid var(--stroke); }
-  .palette .clear { width: auto; border-radius: 6px; padding: 0 8px; font-size: 13px; }
+  .palette button { width: 22px; height: 22px; min-width: 0; padding: 0; border-radius: 50%; border: 1px solid var(--stroke); flex-shrink: 0; }
+  .palette .clear { width: auto; height: 24px; border-radius: 6px; padding: 0 10px; font-size: 13px; margin-left: 4px; }
 
   /* ---------- 正文 ---------- */
   .ProseMirror { outline: none; min-height: 60vh; padding-top: 14px; word-wrap: break-word; white-space: pre-wrap; }
@@ -178,8 +181,8 @@
       <option value="3">标题 3</option>
     </select>
     <span class="sep"></span>
-    <button data-cmd="bulletList" title="项目符号列表 ⌘⇧8（或行首输入「- 空格」）">• 列表</button>
-    <button data-cmd="orderedList" title="编号列表 ⌘⇧7（或行首输入「1. 空格」）">1. 编号</button>
+    <button data-cmd="bulletList" title="项目符号列表 ⌘⇧8（或行首输入「- 空格」）">•列表</button>
+    <button data-cmd="orderedList" title="编号列表 ⌘⇧7（或行首输入「1. 空格」）">1.编号</button>
     <span class="sep"></span>
     <span style="position:relative">
       <button id="color-btn" class="swatch-btn" title="文字颜色">A<span class="bar" id="color-bar"></span></button>
@@ -188,15 +191,18 @@
     <button data-cmd="highlight" title="高亮 ⌘⇧H"><mark>高亮</mark></button>
     <span class="sep"></span>
     <button id="table-btn" title="插入表格">表格</button>
+    <!-- 光标在表格里时，替换上面的「表格」按钮：表格操作收进下拉菜单，工具栏保持一行 -->
+    <select id="table-ops" title="表格操作" hidden>
+      <option value="" selected>表格</option>
+      <option value="addRowBefore">在上方加一行</option>
+      <option value="addRowAfter">在下方加一行</option>
+      <option value="addColumnBefore">在左侧加一列</option>
+      <option value="addColumnAfter">在右侧加一列</option>
+      <option value="deleteRow">删除这一行</option>
+      <option value="deleteColumn">删除这一列</option>
+      <option value="deleteTable">删除整个表格</option>
+    </select>
     <button id="image-btn" title="插入图片（也可以直接拖入或粘贴）">图片</button>
-    <span class="group" id="table-group">
-      <span class="sep"></span>
-      <button data-table="addRowAfter" title="在下方加一行">+行</button>
-      <button data-table="addColumnAfter" title="在右侧加一列">+列</button>
-      <button data-table="deleteRow" title="删除这一行">−行</button>
-      <button data-table="deleteColumn" title="删除这一列">−列</button>
-      <button data-table="deleteTable" title="删除整个表格">删表</button>
-    </span>
   </div>
   <div id="editor"></div>
   <input type="file" id="file-input" accept="image/*" multiple hidden>

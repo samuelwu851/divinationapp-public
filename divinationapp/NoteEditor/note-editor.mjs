@@ -491,8 +491,12 @@ function setupToolbar() {
     highlight: () => editor.chain().focus().toggleHighlight().run(),
   }
   tb.querySelectorAll('[data-cmd]').forEach(b => b.addEventListener('click', () => toggles[b.dataset.cmd]()))
-  tb.querySelectorAll('[data-table]').forEach(b =>
-    b.addEventListener('click', () => editor.chain().focus()[b.dataset.table]().run()))
+  const tableOps = document.getElementById('table-ops')
+  tableOps.addEventListener('change', () => {
+    const op = tableOps.value
+    tableOps.value = ''                       // 选完回到「表格」
+    if (op) editor.chain().focus()[op]().run()
+  })
 
   const blockType = document.getElementById('block-type')
   blockType.addEventListener('change', () => {
@@ -546,7 +550,9 @@ function setupToolbar() {
     blockType.value = lvl ? String(lvl) : 'p'
     const c = editor.getAttributes('textColor').c
     colorBar.style.background = c ? `var(--c-${c})` : 'var(--fg)'
-    document.getElementById('table-group').classList.toggle('show', editor.isActive('table'))
+    const inTable = editor.isActive('table')   // 光标在表格里：「表格」按钮换成表格操作下拉
+    document.getElementById('table-btn').hidden = inTable
+    tableOps.hidden = !inTable
   }
 }
 
