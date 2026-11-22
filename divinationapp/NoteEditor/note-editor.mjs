@@ -116,10 +116,23 @@ function ganzhiChar(ch) {
   return s
 }
 
-function miniHex(lines, moving = new Set()) {
+// 三爻卦（从下往上的阴阳）→ 五行。只给旧快照兜底用：新存的盘，后端已经在 trigrams 里给了五行
+const TRIGRAM_WUXING = {
+  '111': '金', '110': '金', '101': '火', '100': '木',   // 乾 兌 離 震
+  '011': '木', '010': '水', '001': '土', '000': '土',   // 巽 坎 艮 坤
+}
+function trigramWuxing(hex) {
+  if (hex.trigrams) return [hex.trigrams.lower.wuxing, hex.trigrams.upper.wuxing]
+  const key = a => a.join('')
+  return [TRIGRAM_WUXING[key(hex.lines.slice(0, 3))], TRIGRAM_WUXING[key(hex.lines.slice(3, 6))]]
+}
+
+function miniHex(lines, moving = new Set(), wuxing = []) {
   const box = el('div', 'mini-hex')
   for (let i = lines.length - 1; i >= 0; i--) {         // lines[0] 是初爻，画在最下面
     const yao = el('div', 'yao ' + (lines[i] === 1 ? 'yang' : 'yin'))
+    const wx = wuxing[i < 3 ? 0 : 1]                    // 下卦三爻用下卦五行，上卦三爻用上卦五行
+    if (wx) yao.dataset.wx = wx                         // 颜色由 body.wx-on 的 CSS 决定，切换不用重画
     yao.append(el('span'))
     if (lines[i] !== 1) yao.append(el('span'))
     if (moving.has(i)) yao.classList.add('moving')
@@ -130,7 +143,7 @@ function miniHex(lines, moving = new Set()) {
 
 function guaBlock(hex, label, moving) {
   const g = el('div', 'gua')
-  g.append(el('div', 'name', hex.name), miniHex(hex.lines, moving), el('div', 'lbl', label))
+  g.append(el('div', 'name', hex.name), miniHex(hex.lines, moving, trigramWuxing(hex)), el('div', 'lbl', label))
   return g
 }
 
@@ -141,7 +154,8 @@ function guaPair(org, chg) {
   if (moving.size === 0) {
     pair.append(guaBlock(org, '本卦'))
   } else {
-    pair.append(guaBlock(org, '本卦', moving), el('div', 'gua-arrow', '→'), guaBlock(chg, '变卦'))
+    // 和 DualGuaView 一样：只在本卦的动爻旁画 →，两卦中间不再画大箭头（否则动爻在中间时会出现两个箭头）
+    pair.append(guaBlock(org, '本卦', moving), guaBlock(chg, '变卦'))
   }
   return pair
 }
@@ -178,6 +192,119 @@ function renderCard(dom, chart) {
   dom.replaceChildren(...body, dom.querySelector('.cc-del'))
 }
 
+// ---------- 排盘卡片旁的标签：加 / 删立刻存进数据库（和插入排盘一样，不等保存） ----------
+// 新加的标签排在最后（后端按添加先后返回），所以新标签往下加，不会把旧的往下顶。
+const labelBoxes = new Map()       // 标签区 → 它的排盘；标签被彻底删除时，所有卡片一起刷新
+
+/** 某个标签被彻底删除：所有卡片上去掉它。 */
+function dropLabelEverywhere(labelId) {
+  for (const [box, chart] of labelBoxes) {
+    if (!box.isConnected) { labelBoxes.delete(box); continue }
+    if ((chart.labels || []).some(l => l.id === labelId)) {
+      chart.labels = chart.labels.filter(l => l.id !== labelId)
+      renderChartLabels(box, chart)
+    }
+  }
+}
+
+function renderChartLabels(box, chart) {
+  labelBoxes.set(box, chart)
+  box.replaceChildren()
+  // 标签放在 .cl-chips 里：标签多了在这里面竖向滚动；「＋ 标签」和浮窗在外面，不会被滚动区裁掉
+  const chips = el('div', 'cl-chips')
+  for (const l of chart.labels || []) {
+    const chip = el('span', 'cl-chip')
+    chip.title = l.name                                   // 名字太长被省略时，悬停看全名
+    chip.append(el('span', 'cl-name', l.name))
+    const x = el('button', 'cl-x', '×')
+    x.title = '去掉这个标签'
+    x.addEventListener('click', async e => {
+      e.stopPropagation()
+      try {
+        chart.labels = (await host.call('chart_label_remove', { chart_id: chart.id, label_id: l.id })).labels
+        renderChartLabels(box, chart)
+      } catch (err) { toast('去掉标签失败：' + err.message) }
+    })
+    chip.append(x)
+    chips.append(chip)
+  }
+  if (chips.childElementCount) box.append(chips)
+  const add = el('button', 'cl-add', '＋ 标签')
+  add.addEventListener('click', e => { e.stopPropagation(); openLabelPopover(box, add, chart) })
+  box.append(add)
+}
+
+function openLabelPopover(box, anchorBtn, chart) {
+  document.querySelectorAll('.cl-pop').forEach(p => p.remove())
+  const pop = el('div', 'cl-pop')
+  const input = el('input')
+  input.placeholder = '搜索或新建，如：疾病'
+  input.maxLength = 20
+  const list = el('div', 'cl-list')
+  pop.append(input, list)
+  box.append(pop)
+  box.classList.add('open')
+  const close = () => {
+    pop.remove()
+    box.classList.remove('open')
+    document.removeEventListener('mousedown', outside, true)
+  }
+  const outside = e => { if (!pop.contains(e.target) && e.target !== anchorBtn) close() }
+  document.addEventListener('mousedown', outside, true)
+
+  const addByName = async name => {
+    name = name.trim()
+    if (!name) return
+    try {
+      chart.labels = (await host.call('chart_label_add', { chart_id: chart.id, name })).labels
+      close()
+      renderChartLabels(box, chart)
+    } catch (err) { toast('添加标签失败：' + err.message) }
+  }
+  const refresh = async () => {
+    const kw = input.value.trim()
+    let found = []
+    try { found = (await host.call('label_search', { keyword: kw })).labels } catch { /* 搜不到就只显示新建 */ }
+    const have = new Set((chart.labels || []).map(l => l.id))
+    list.replaceChildren()
+    for (const l of found.filter(l => !have.has(l.id))) {
+      const row = el('div', 'cl-row')
+      const b = el('button', 'cl-item', l.name)
+      b.title = l.name
+      b.addEventListener('click', () => addByName(l.name))
+      const x = el('button', 'cl-del', '×')
+      x.title = '彻底删除这个标签'
+      x.addEventListener('click', async e => {
+        e.stopPropagation()
+        const detail = l.uses > 0
+          ? `有 ${l.uses} 处笔记或排盘正在用这个标签，删除后它们上面的这个标签都会被去掉，无法恢复。`
+          : '删除后无法恢复。'
+        if (!confirm(`删除标签「${l.name}」？\n${detail}`)) return
+        try {
+          await host.call('label_delete', { label_id: l.id })
+          dropLabelEverywhere(l.id)
+          host.notify('labelDeleted', { id: l.id })     // 让 Swift 那边的笔记标签行也去掉
+          refresh()
+        } catch (err) { toast('删除标签失败：' + err.message) }
+      })
+      row.append(b, x)
+      list.append(row)
+    }
+    if (kw && !found.some(l => l.name === kw)) {
+      const b = el('button', 'cl-item cl-new', `新建标签「${kw}」`)
+      b.addEventListener('click', () => addByName(kw))
+      list.append(b)
+    }
+  }
+  input.addEventListener('input', refresh)
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addByName(input.value) }
+    if (e.key === 'Escape') { e.preventDefault(); close() }
+  })
+  refresh()
+  input.focus()
+}
+
 const ChartCard = Node.create({
   name: 'chart',
   group: 'block',
@@ -197,8 +324,15 @@ const ChartCard = Node.create({
   renderHTML({ HTMLAttributes }) { return ['div', HTMLAttributes] },
   addNodeView() {
     return ({ node, getPos, editor }) => {
-      const dom = el('div', 'chart-card')
-      dom.contentEditable = 'false'
+      // 外层 wrap：卡片居中；标签挂在卡片右边（absolute，不影响卡片居中）
+      const wrap = el('div', 'chart-wrap')
+      wrap.contentEditable = 'false'
+      const anchor = el('div', 'chart-anchor')
+      const card = el('div', 'chart-card')
+      const labels = el('div', 'chart-labels')
+      anchor.append(card, labels)
+      wrap.append(anchor)
+
       const del = el('button', 'cc-del', '×')
       del.title = '从正文中删除这个排盘'
       del.addEventListener('mousedown', e => e.preventDefault())
@@ -207,15 +341,20 @@ const ChartCard = Node.create({
         const pos = getPos()
         editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run()
       })
-      dom.append(head('排盘', '载入中…'), del)
+      card.append(head('排盘', '载入中…'), del)
       loadChart(node.attrs.id)
-        .then(c => renderCard(dom, c))
-        .catch(() => dom.replaceChildren(head('排盘'), el('div', 'cc-missing', '这个排盘已被删除'), del))
-      dom.addEventListener('click', e => {
+        .then(c => { renderCard(card, c); renderChartLabels(labels, c) })
+        .catch(() => card.replaceChildren(head('排盘'), el('div', 'cc-missing', '这个排盘已被删除'), del))
+      card.addEventListener('click', e => {
         if (e.target === del) return
         host.notify('openChart', { id: node.attrs.id })
       })
-      return { dom }
+      return {
+        dom: wrap,
+        // 标签区里的点击、打字由我们自己处理，编辑器不要管（否则会选中卡片、把字打进正文）
+        stopEvent: e => !!e.target.closest?.('.chart-labels'),
+        ignoreMutation: () => true,
+      }
     }
   },
   addCommands() {
@@ -427,8 +566,9 @@ function parseContent(content) {
 }
 
 window.noteEditor = {
-  init({ noteId: id, content, accent, assetBase: base } = {}) {
+  init({ noteId: id, content, accent, assetBase: base, wuxingColor } = {}) {
     noteId = id ?? null
+    document.body.classList.toggle('wx-on', !!wuxingColor)
     if (base) assetBase = base
     if (accent) document.documentElement.style.setProperty('--accent', accent)
     if (editor) editor.destroy()
@@ -491,6 +631,16 @@ window.noteEditor = {
 
   focus() {
     editor?.commands.focus()
+  },
+
+  /** 五行颜色开关（在点开的排盘窗口里勾选，宿主同步过来）。 */
+  setWuxingColor(on) {
+    document.body.classList.toggle('wx-on', !!on)
+  },
+
+  /** 标签在 Swift 那边被彻底删除了：卡片上也去掉。 */
+  labelDeleted(id) {
+    dropLabelEverywhere(id)
   },
 }
 

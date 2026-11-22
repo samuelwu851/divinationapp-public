@@ -122,4 +122,15 @@ CREATE INDEX idx_chart_tags_chart ON chart_tags(chart_id);
 
 
 
-MIGRATIONS = [SCHEMA_V1]
+# V2：标签按「添加的先后」排序。
+# note_labels / chart_labels 是 WITHOUT ROWID 表，没有隐含的插入顺序，所以加一列 seq：
+# 每份笔记（每个排盘）里从 1 开始递增，新加的标签 seq 最大，排在最后。
+# 注意 SQLite 的 ALTER TABLE ADD COLUMN 只能用常量默认值（不能用 datetime('now')），
+# 所以用整数序号而不是时间；旧数据 seq 都是 0，再按名字排。
+SCHEMA_V2 = """
+ALTER TABLE note_labels  ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE chart_labels ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+"""
+
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2]

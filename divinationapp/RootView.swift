@@ -4,7 +4,7 @@ import AppKit
 #endif
 
 /// App 根视图：底部可横滑的「术数大类」切换栏（易经 / 八字…），默认进易经。
-/// 易经类内部的子术数（易经速查 / 时间起卦）仍用右上角 ⋯ 菜单切换。
+/// 易经类内部的子术数（易经速查 / 梅花易数）仍用右上角 ⋯ 菜单切换。
 struct MainView: View {
     enum Section: String, CaseIterable {
         case iching = "易经"
@@ -80,11 +80,11 @@ struct MainView: View {
 }
 
 /// 易经类主页：默认进「易经速查」，右上角 ⋯ 菜单切换易经类各子术数。
-/// 用 switch 选择页面——切走再切回「时间起卦」时会重建视图、@State 自动归零。
+/// 用 switch 选择页面——切走再切回「梅花易数」时会重建视图、@State 自动归零。
 struct IChingHomeView: View {
     enum Page: String, CaseIterable {
         case iching  = "易经速查"
-        case time    = "时间起卦"
+        case time    = "梅花易数"
     }
 
     @State private var page: Page = .iching

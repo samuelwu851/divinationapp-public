@@ -26,11 +26,18 @@ final class NoteEditorController: NSObject {
     private var initialContent = ""
     private var ready = false
 
+    /// 卡片的五行颜色（和点开的排盘窗口共用一个设置）。
+    var wuxingColor = false
+
     var onChange: () -> Void = {}
     var onOpenChart: (Int) -> Void = { _ in }
+    var onLabelDeleted: (Int) -> Void = { _ in }
 
     /// 网页可以调用的后端命令（白名单）。
-    private let allowedCommands: Set<String> = ["chart_get", "attachment_add"]
+    private let allowedCommands: Set<String> = [
+        "chart_get", "attachment_add",
+        "label_search", "label_delete", "chart_label_add", "chart_label_remove",   // 排盘卡片旁的标签
+    ]
 
     /// 设定要编辑的笔记；页面已就绪就立刻载入。
     func load(noteId: Int, content: String) {
@@ -49,6 +56,17 @@ final class NoteEditorController: NSObject {
     func cursorInBody() async -> Bool {
         guard let webView, ready else { return false }
         return (try? await webView.evaluateJavaScript("window.noteEditor.cursorInBody()") as? Bool) ?? false
+    }
+
+    /// 五行颜色开关变了（在排盘窗口里勾选）：卡片跟着变。
+    func setWuxingColor(_ on: Bool) {
+        wuxingColor = on
+        webView?.evaluateJavaScript("window.noteEditor.setWuxingColor(\(on))")
+    }
+
+    /// 某个标签被彻底删除了：让网页里的排盘卡片也去掉它。
+    func labelDeleted(id: Int) {
+        webView?.evaluateJavaScript("window.noteEditor.labelDeleted(\(id))")
     }
 
     /// 在光标处插入排盘卡片。
@@ -107,6 +125,8 @@ final class NoteEditorController: NSObject {
             onChange()
         case "openChart":
             if let id = msg["id"] as? Int { onOpenChart(id) }
+        case "labelDeleted":
+            if let id = msg["id"] as? Int { onLabelDeleted(id) }
         default:
             break
         }
@@ -129,6 +149,7 @@ final class NoteEditorController: NSObject {
             "content": initialContent,
             "accent": Self.accentHex(),
             "assetBase": "\(NoteEditorSchemeHandler.scheme)://asset/",
+            "wuxingColor": wuxingColor,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
@@ -151,6 +172,23 @@ extension NoteEditorController: WKNavigationDelegate, WKUIDelegate {
     }
 
     #if os(macOS)
+    /// 网页里的 confirm()（删除标签前的确认）：WKWebView 不会自己弹框，要宿主用原生对话框显示。
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo) async -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        let parts = message.components(separatedBy: "\n")
+        alert.messageText = parts.first ?? message
+        alert.informativeText = parts.dropFirst().joined(separator: "\n")
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        alert.buttons.first?.hasDestructiveAction = true
+        if let window = webView.window {
+            return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+        }
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     /// macOS 上 <input type=file> 需要宿主自己弹文件选择框。
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo) async -> [URL]? {

@@ -42,7 +42,7 @@ struct LunarMonthsResult: Codable {
 }
 
 /// 无状态小帮手：包一下 engine + JSON 解码。不持有状态、不是 store。
-/// 时间起卦用它一次性取数据，结果存进视图自己的 @State。
+/// 梅花易数用它一次性取数据，结果存进视图自己的 @State。
 struct DivinationClient {
     private let engine: DivinationEngine = PythonEngine()
 
@@ -72,6 +72,12 @@ struct DivinationClient {
                     targetYear: Int) -> BaziLiuYueResult? {
         decode(send(["cmd": "liuyue", "year": year, "month": month, "day": day,
                      "hour": hour, "minute": minute, "target_year": targetYear]))
+    }
+
+    /// 参卦：本卦 → 变卦时，变了的三爻卦起的参卦（没有动爻 → 空）。
+    func cangua(org: Int, chg: Int) -> [CanGuaGroup] {
+        let r: CanGuaResult? = decode(send(["cmd": "cangua", "org_value": org, "chg_value": chg]))
+        return r?.groups ?? []
     }
 
     func yilin(org: Int, chg: Int) -> String? {
@@ -126,6 +132,34 @@ struct DivinationClient {
     @discardableResult
     func subjectCreate(name: String, remark: String = "") -> Subject? {
         decode(send(["cmd": "subject_create", "name": name, "remark": remark]))
+    }
+
+    /// 标签模糊搜索（空关键字 = 全部，常用的在前）。
+    func labelSearch(keyword: String) -> [NoteLabel] {
+        let r: LabelSearchResult? = decode(send(["cmd": "label_search", "keyword": keyword]))
+        return r?.labels ?? []
+    }
+
+    /// 新建标签；同名已存在就返回已有的。
+    func labelCreate(name: String) -> NoteLabel? {
+        decode(send(["cmd": "label_create", "name": name]))
+    }
+
+    /// 彻底删除一个标签（所有笔记和排盘上的这个标签都会去掉）。
+    @discardableResult
+    func labelDelete(id: Int) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "label_delete", "label_id": id]))
+        return r?.ok ?? false
+    }
+
+    @discardableResult
+    func noteLabelAdd(noteId: Int, labelId: Int) -> Note? {
+        decode(send(["cmd": "note_label_add", "note_id": noteId, "label_id": labelId]))
+    }
+
+    @discardableResult
+    func noteLabelRemove(noteId: Int, labelId: Int) -> Note? {
+        decode(send(["cmd": "note_label_remove", "note_id": noteId, "label_id": labelId]))
     }
 
     /// 给已有笔记添加一个案主（重复添加不报错），返回更新后的笔记。

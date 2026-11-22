@@ -40,6 +40,7 @@ def _iching(p: dict) -> tuple[str, dict]:
         "original": iching_service.checkandpack(org),
         "changed": iching_service.checkandpack(chg),
         "yilin": _yilin_text(org, chg),
+        "cangua": iching_service.cangua(org, chg)["groups"],
     }
 
 
@@ -53,6 +54,7 @@ def _meihua(p: dict) -> tuple[str, dict]:
         "original": iching_service.checkandpack(org),
         "changed": iching_service.checkandpack(chg),
         "yilin": _yilin_text(org, chg),
+        "cangua": iching_service.cangua(org, chg)["groups"],
     }
 
 

@@ -12,6 +12,7 @@ def get_note(note_id: int) -> dict:
     if note is None:
         raise LookupError(f"笔记不存在：{note_id}")
     note["subjects"] = repo.get_note_subjects(note_id)
+    note["labels"] = repo.get_note_labels(note_id)
     return note
 
 
@@ -21,8 +22,12 @@ def list_notes() -> list[dict]:
     by_note = {}
     for row in repo.get_all_note_subjects():
         by_note.setdefault(row["note_id"], []).append({"id": row["id"], "name": row["name"]})
+    labels_by_note = {}
+    for row in repo.get_all_note_labels():
+        labels_by_note.setdefault(row["note_id"], []).append({"id": row["id"], "name": row["name"]})
     for n in notes:
         n["subjects"] = by_note.get(n["id"], [])
+        n["labels"] = labels_by_note.get(n["id"], [])
     return notes
 
 
@@ -101,7 +106,70 @@ def get_chart(chart_id: int) -> dict:
         "snapshot": json.loads(row["snapshot_json"]),
         "algo_version": row["algo_version"],
         "created_at": row["created_at"],
+        "labels": repo.get_chart_labels(chart_id),
     }
+
+
+# ---------- 标签：笔记和排盘共用一份清单，名字唯一 ----------
+
+def _clean_label_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("标签名字不能为空")
+    if len(name) > 20:
+        raise ValueError("标签名字太长（最多 20 个字）")
+    return name
+
+
+def search_labels(keyword: str) -> list[dict]:
+    return repo.search_labels(keyword.strip())
+
+
+def create_label(name: str) -> dict:
+    """新建标签；同名的已经存在就直接返回已有的（标签不允许重名）。"""
+    name = _clean_label_name(name)
+    with db.get():
+        label_id = repo.get_or_create_label(name)
+    return repo.get_label(label_id)
+
+
+def delete_label(label_id: int) -> None:
+    """彻底删除一个标签：所有笔记和排盘上的这个标签都会一起去掉。"""
+    with db.get():
+        if repo.delete_label(label_id) == 0:
+            raise LookupError(f"标签不存在：{label_id}")
+
+
+def add_note_label(note_id: int, label_id: int) -> dict:
+    get_note(note_id)
+    if repo.get_label(label_id) is None:
+        raise LookupError(f"标签不存在：{label_id}")
+    with db.get():
+        repo.link_note_label(note_id, label_id)
+    return get_note(note_id)
+
+
+def remove_note_label(note_id: int, label_id: int) -> dict:
+    with db.get():
+        if repo.unlink_note_label(note_id, label_id) == 0:
+            raise LookupError(f"笔记 {note_id} 没有标签 {label_id}")
+    return get_note(note_id)
+
+
+def add_chart_label(chart_id: int, name: str) -> list[dict]:
+    """按名字给排盘贴标签（没有这个标签就顺便新建），返回排盘现在的全部标签。"""
+    name = _clean_label_name(name)
+    if repo.get_chart(chart_id) is None:
+        raise LookupError(f"排盘不存在：{chart_id}")
+    with db.get():
+        repo.link_chart_label(chart_id, repo.get_or_create_label(name))
+    return repo.get_chart_labels(chart_id)
+
+
+def remove_chart_label(chart_id: int, label_id: int) -> list[dict]:
+    with db.get():
+        repo.unlink_chart_label(chart_id, label_id)
+    return repo.get_chart_labels(chart_id)
 
 
 # ---------- 图片 ----------
@@ -232,6 +300,28 @@ def _attachment_add_cmd(req: dict) -> str:
         req.get("width"), req.get("height"),
     ))
 
+def _label_search_cmd(req: dict) -> str:
+    return _to_json({"labels": search_labels(req.get("keyword", ""))})
+
+def _label_create_cmd(req: dict) -> str:
+    return _to_json(create_label(req["name"]))
+
+def _label_delete_cmd(req: dict) -> str:
+    delete_label(req["label_id"])
+    return _to_json({"ok": True})
+
+def _note_label_add_cmd(req: dict) -> str:
+    return _to_json(add_note_label(req["note_id"], req["label_id"]))
+
+def _note_label_remove_cmd(req: dict) -> str:
+    return _to_json(remove_note_label(req["note_id"], req["label_id"]))
+
+def _chart_label_add_cmd(req: dict) -> str:
+    return _to_json({"labels": add_chart_label(req["chart_id"], req["name"])})
+
+def _chart_label_remove_cmd(req: dict) -> str:
+    return _to_json({"labels": remove_chart_label(req["chart_id"], req["label_id"])})
+
 def _subject_search_cmd(req: dict) -> str:
     return _to_json({"subjects": search_subjects(req.get("keyword", ""))})
 
@@ -252,6 +342,13 @@ COMMANDS = {
     "chart_create": _chart_create_cmd,
     "chart_get": _chart_get_cmd,
     "attachment_add": _attachment_add_cmd,
+    "label_search": _label_search_cmd,
+    "label_create": _label_create_cmd,
+    "label_delete": _label_delete_cmd,
+    "note_label_add": _note_label_add_cmd,
+    "note_label_remove": _note_label_remove_cmd,
+    "chart_label_add": _chart_label_add_cmd,
+    "chart_label_remove": _chart_label_remove_cmd,
     "subject_search": _subject_search_cmd,
     "subject_create": _subject_create_cmd,
 }

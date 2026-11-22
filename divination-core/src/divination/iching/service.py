@@ -16,6 +16,19 @@ from divination.iching import core, repository
 from divination.iching.model import Hexagram
 import json
 
+def palace_of(hexagram: Hexagram) -> dict:
+    """八宫：{"name": "乾", "stage": "一世"}，界面拼成「乾宫 · 一世」。"""
+    palace, stage = core.bagong(hexagram)
+    return {"name": repository.trigram_name(palace), "stage": stage}
+
+
+def trigrams_of(hexagram: Hexagram) -> dict:
+    """上下卦及其五行：{"lower": {"name": "離", "wuxing": "火"}, "upper": {...}}（界面按五行给爻上色）。"""
+    lower, upper = core.split(hexagram)
+    pack = lambda t: {"name": repository.trigram_name(t), "wuxing": repository.trigram_wuxing(t)}
+    return {"lower": pack(lower), "upper": pack(upper)}
+
+
 def checkandpack(value: int) -> dict:
     """
         这个函数通过数字来得到本卦、错卦、互卦、综卦
@@ -42,23 +55,58 @@ def checkandpack(value: int) -> dict:
         "value": hexagram.value,
         "name": repository.name_of(hexagram),
         "order": repository.order_of(hexagram),
+        "palace": palace_of(hexagram),
+        "trigrams": trigrams_of(hexagram),
         "lines": lines,
         "hexagram_text": hexagram_text,
         "cuogua": repository.name_of(cuogua),
         "cuogua_lines": cuogua_lines,
         "cuogua_text": cuogua_text,
+        "cuogua_palace": palace_of(cuogua),
+        "cuogua_trigrams": trigrams_of(cuogua),
         "zonggua": repository.name_of(zonggua),
         "zonggua_lines": zonggua_lines,
         "zonggua_text": zonggua_text,
+        "zonggua_palace": palace_of(zonggua),
+        "zonggua_trigrams": trigrams_of(zonggua),
         "hugua": repository.name_of(hugua),
         "hugua_lines": hugua_lines,
-        "hugua_text": hugua_text
+        "hugua_text": hugua_text,
+        "hugua_palace": palace_of(hugua),
+        "hugua_trigrams": trigrams_of(hugua),
     }
 
 def flip(value: int, line: int) -> dict:
     """翻某一爻，返回新卦的完整显示数据（UI 不碰任何运算）。"""
     new_hexagram = core.flip(Hexagram(value), line)
     return checkandpack(new_hexagram.value)
+
+def _brief(hexagram: Hexagram, label: str) -> dict:
+    """参卦用的精简信息：卦名 + 六爻 + 卦辞爻辞（够界面画小卦、点开看辞）。"""
+    return {
+        "label": label,
+        "value": hexagram.value,
+        "name": repository.name_of(hexagram),
+        "lines": [core.determine_yinyang(hexagram, line).value for line in range(1, 7)],
+        "text": repository.get_hexagram_text(hexagram),
+        "palace": palace_of(hexagram),
+        "trigrams": trigrams_of(hexagram),
+    }
+
+
+def cangua(org_value: int, chg_value: int) -> dict:
+    """本卦 → 变卦的参卦（见 core.cangua）。没有动爻时 groups 为空。"""
+    groups = []
+    for part, a, b, first, second in core.cangua(Hexagram(org_value), Hexagram(chg_value)):
+        groups.append({
+            "part": part,                                   # lower / upper
+            "part_name": "下卦" if part == "lower" else "上卦",
+            "from": repository.trigram_name(a),             # 原
+            "to": repository.trigram_name(b),               # 变
+            "guas": [_brief(first, "参卦一"), _brief(second, "参卦二")],
+        })
+    return {"org_value": org_value, "chg_value": chg_value, "groups": groups}
+
 
 def yilin(org_value: int, chg_value: int) -> dict:
     """
@@ -94,4 +142,5 @@ COMMANDS = {
     "lookup": lambda req: lookup_json(req["value"]),
     "flip": lambda req: flip_json(req["value"], req["line"]),
     "yilin": lambda req: yilin_json(req["org_value"], req["chg_value"]),
+    "cangua": lambda req: json.dumps(cangua(req["org_value"], req["chg_value"]), ensure_ascii=False),
 }

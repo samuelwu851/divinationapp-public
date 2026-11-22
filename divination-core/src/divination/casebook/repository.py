@@ -178,3 +178,94 @@ def list_attachment_filenames(note_id: int) -> list[str]:
 
 def delete_attachment(filename: str) -> int:
     return db.get().execute("DELETE FROM attachments WHERE filename = ?", (filename,)).rowcount
+
+
+# ---------- 标签（笔记和排盘共用一份清单，名字唯一） ----------
+
+def search_labels(keyword: str, limit: int = 30) -> list[dict]:
+    # 空关键字 = 列出全部；按「用过的次数」多的在前，常用标签排前面
+    rows = db.get().execute(
+        """
+        SELECT l.id, l.name,
+               (SELECT COUNT(*) FROM note_labels nl WHERE nl.label_id = l.id)
+             + (SELECT COUNT(*) FROM chart_labels cl WHERE cl.label_id = l.id) AS uses
+        FROM labels l
+        WHERE instr(l.name, ?) > 0
+        ORDER BY instr(l.name, ?), uses DESC, l.name
+        LIMIT ?
+        """,
+        (keyword, keyword, limit),
+    ).fetchall()
+    # uses：有多少笔记 + 排盘在用这个标签（删除标签前提示用）
+    return [dict(r) for r in rows]
+
+def delete_label(label_id: int) -> int:
+    # note_labels / chart_labels 设了 ON DELETE CASCADE，所有笔记和排盘上的这个标签会一起去掉
+    return db.get().execute("DELETE FROM labels WHERE id = ?", (label_id,)).rowcount
+
+def get_or_create_label(name: str) -> int:
+    """名字已存在就返回已有的 id，不存在就新建。"""
+    db.get().execute("INSERT OR IGNORE INTO labels(name) VALUES (?)", (name,))
+    return db.get().execute("SELECT id FROM labels WHERE name = ?", (name,)).fetchone()["id"]
+
+def get_label(label_id: int) -> dict | None:
+    row = db.get().execute("SELECT id, name FROM labels WHERE id = ?", (label_id,)).fetchone()
+    return dict(row) if row else None
+
+def get_note_labels(note_id: int) -> list[dict]:
+    rows = db.get().execute(
+        """
+        SELECT l.id, l.name FROM note_labels nl JOIN labels l ON l.id = nl.label_id
+        WHERE nl.note_id = ? ORDER BY nl.seq, l.name
+        """,
+        (note_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+def get_all_note_labels() -> list[dict]:
+    rows = db.get().execute(
+        """
+        SELECT nl.note_id, l.id, l.name FROM note_labels nl JOIN labels l ON l.id = nl.label_id
+        ORDER BY nl.seq, l.name
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+def link_note_label(note_id: int, label_id: int) -> int:
+    # seq = 这份笔记里目前最大的序号 + 1 → 新标签排在最后
+    return db.get().execute(
+        """
+        INSERT OR IGNORE INTO note_labels(note_id, label_id, seq)
+        VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM note_labels WHERE note_id = ?))
+        """,
+        (note_id, label_id, note_id),
+    ).rowcount
+
+def unlink_note_label(note_id: int, label_id: int) -> int:
+    return db.get().execute(
+        "DELETE FROM note_labels WHERE note_id = ? AND label_id = ?", (note_id, label_id)
+    ).rowcount
+
+def get_chart_labels(chart_id: int) -> list[dict]:
+    rows = db.get().execute(
+        """
+        SELECT l.id, l.name FROM chart_labels cl JOIN labels l ON l.id = cl.label_id
+        WHERE cl.chart_id = ? ORDER BY cl.seq, l.name
+        """,
+        (chart_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+def link_chart_label(chart_id: int, label_id: int) -> int:
+    return db.get().execute(
+        """
+        INSERT OR IGNORE INTO chart_labels(chart_id, label_id, seq)
+        VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM chart_labels WHERE chart_id = ?))
+        """,
+        (chart_id, label_id, chart_id),
+    ).rowcount
+
+def unlink_chart_label(chart_id: int, label_id: int) -> int:
+    return db.get().execute(
+        "DELETE FROM chart_labels WHERE chart_id = ? AND label_id = ?", (chart_id, label_id)
+    ).rowcount

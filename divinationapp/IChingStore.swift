@@ -6,6 +6,7 @@ final class IChingStore {
     private(set) var original: Hexagram?     // 本卦
     private(set) var changed: Hexagram?      // 变卦
     private(set) var yilin: String?          // 崔氏易林文本（仅变卦模式）
+    private(set) var cangua: [CanGuaGroup] = []   // 参卦（仅变卦模式；和易林一起算）
     private(set) var errorMessage: String?
 
     /// 变卦模式开关（UI 可双向绑定）
@@ -18,6 +19,7 @@ final class IChingStore {
                 recomputeYilin()
             } else {
                 yilin = nil
+                cangua = []
             }
         }
     }
@@ -79,8 +81,13 @@ final class IChingStore {
         if let v = changedValue { changed = fetchLookup(v) }
     }
 
+    /// 重算易林和参卦（两者都只依赖本卦、变卦，同时变）。
     private func recomputeYilin() {
-        guard let o = original, let c = changed else { yilin = nil; return }
+        guard let o = original, let c = changed else { yilin = nil; cangua = []; return }
+        if let resp = dispatch(["cmd": "cangua", "org_value": o.value, "chg_value": c.value]) {
+            let dec = JSONDecoder(); dec.keyDecodingStrategy = .convertFromSnakeCase
+            cangua = (try? dec.decode(CanGuaResult.self, from: Data(resp.utf8)))?.groups ?? []
+        }
         guard let resp = dispatch(["cmd": "yilin", "org_value": o.value, "chg_value": c.value])
         else { return }
         let dec = JSONDecoder(); dec.keyDecodingStrategy = .convertFromSnakeCase

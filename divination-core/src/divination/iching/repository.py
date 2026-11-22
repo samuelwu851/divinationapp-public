@@ -13,7 +13,7 @@
 import json
 from importlib import resources
 
-from divination.iching.model import Hexagram
+from divination.iching.model import Hexagram, Trigram
 
 def _load() -> dict[int, dict]:
     """从内嵌的 JSON 文件里加载 64 卦的资料。
@@ -32,6 +32,28 @@ def _load() -> dict[int, dict]:
     return result
 
 _INDEX = _load()
+
+# 三爻卦的名字（资料文字用香港繁体，和卦名一致）
+_TRIGRAM_NAMES = {
+    Trigram.qian: "乾", Trigram.dui: "兌", Trigram.li: "離", Trigram.zhen: "震",
+    Trigram.xun: "巽", Trigram.kan: "坎", Trigram.gen: "艮", Trigram.kun: "坤",
+}
+
+
+# 三爻卦的五行：乾兌金，離火，震巽木，坎水，艮坤土
+_TRIGRAM_WUXING = {
+    Trigram.qian: "金", Trigram.dui: "金", Trigram.li: "火", Trigram.zhen: "木",
+    Trigram.xun: "木", Trigram.kan: "水", Trigram.gen: "土", Trigram.kun: "土",
+}
+
+
+def trigram_name(trigram: Trigram) -> str:
+    return _TRIGRAM_NAMES[trigram]
+
+
+def trigram_wuxing(trigram: Trigram) -> str:
+    return _TRIGRAM_WUXING[trigram]
+
 
 def info_of(hexagram: Hexagram) -> dict:
     return _INDEX[hexagram.value]

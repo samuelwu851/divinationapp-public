@@ -10,7 +10,7 @@ enum NoteEditTarget: Hashable {
 ///
 /// - 新建：一进来就在数据库里建一份空笔记，之后和「编辑」走同一套流程
 ///   （插入排盘、图片都需要先有 note_id）。没保存就离开 → 整份删掉。
-/// - 保存：标题/正文走 note_update；案主对比基线做差量增删。
+/// - 保存：标题/正文走 note_update；案主、标签对比基线做差量增删。
 /// - 离开时：调 note_cleanup，清掉正文里已经不引用的排盘和图片
 ///   （编辑中插入后又删掉的、或放弃修改的）。
 struct NoteEditorView: View {
@@ -20,6 +20,8 @@ struct NoteEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) private var openWindow
+    /// 笔记里排盘的五行颜色：只在点开的排盘窗口里勾选，记住上次的选择，卡片跟着同步
+    @AppStorage(ChartDetailView.wuxingColorKey) private var chartWuxingColor = false
 
     @State private var noteId: Int?
     @State private var createdHere = false      // 这份笔记是本次「新建」时建的
@@ -28,12 +30,14 @@ struct NoteEditorView: View {
 
     @State private var title = ""
     @State private var subjects: [Subject] = []
+    @State private var labels: [NoteLabel] = []
     @State private var bodyChanged = false      // 网页编辑器通知「正文改过」
     @State private var loaded = false
 
     // 基线：载入时的原始值，用来判断「有没有未保存的修改」
     @State private var baseTitle = ""
     @State private var baseSubjectIDs: Set<Int> = []
+    @State private var baseLabelIDs: Set<Int> = []
 
     @State private var showUnsavedAlert = false
     @State private var showInsertChart = false
@@ -48,6 +52,7 @@ struct NoteEditorView: View {
         title != baseTitle
             || bodyChanged
             || Set(subjects.map(\.id)) != baseSubjectIDs
+            || Set(labels.map(\.id)) != baseLabelIDs
     }
 
     var body: some View {
@@ -58,6 +63,9 @@ struct NoteEditorView: View {
 
             // 案主增删只改本地，点「保存」时才写后端
             SubjectPicker(client: client, selected: $subjects)
+
+            // 标签（算什么事）：同样只改本地，保存时写后端
+            LabelPicker(client: client, selected: $labels, onLabelDeleted: { labelDeleted($0) })
 
             Divider()
 
@@ -105,10 +113,11 @@ struct NoteEditorView: View {
             Button("放弃修改", role: .destructive) { dismiss() }
             Button("继续编辑", role: .cancel) {}
         } message: {
-            Text("当前的标题、正文或案主改动还没保存，确定要离开吗？")
+            Text("当前的标题、正文、案主或标签改动还没保存，确定要离开吗？")
         }
         .onAppear(perform: load)
         .onDisappear(perform: finish)
+        .onChange(of: chartWuxingColor) { _, on in editor.setWuxingColor(on) }   // 排盘窗口里勾选 → 卡片同步
     }
 
     private func load() {
@@ -126,15 +135,19 @@ struct NoteEditorView: View {
                 title = n.title
                 content = n.body ?? ""
                 subjects = n.subjects ?? []
+                labels = n.labels ?? []
             }
         }
         // 记录基线（新建则全为空）
         baseTitle = title
         baseSubjectIDs = Set(subjects.map(\.id))
+        baseLabelIDs = Set(labels.map(\.id))
         loaded = true
 
         guard let noteId else { return }
+        editor.wuxingColor = chartWuxingColor
         editor.onChange = { bodyChanged = true }
+        editor.onLabelDeleted = { labelDeleted($0, fromEditor: true) }
         editor.onOpenChart = { id in
             #if os(macOS)
             openWindow(id: "chart", value: id)    // 独立窗口：可以边看排盘边写笔记
@@ -143,6 +156,15 @@ struct NoteEditorView: View {
             #endif
         }
         editor.load(noteId: noteId, content: content)
+    }
+
+    /// 某个标签被彻底删除了（在笔记标签浮窗里删，或在排盘卡片旁的浮窗里删）：
+    /// 数据库里所有关联已经级联删掉，这里同步界面——去掉胶囊、从基线里也去掉（否则会误判成「有未保存的修改」），
+    /// 再通知另一边（网页里的排盘卡片 / 笔记标签行）。
+    private func labelDeleted(_ id: Int, fromEditor: Bool = false) {
+        labels.removeAll { $0.id == id }
+        baseLabelIDs.remove(id)
+        if !fromEditor { editor.labelDeleted(id: id) }
     }
 
     /// 「插入排盘」：光标在正文里才打开排盘面板，排完插到光标处；否则提示先在正文里点一下。
@@ -166,6 +188,10 @@ struct NoteEditorView: View {
             let now = Set(subjects.map(\.id))
             for sid in now.subtracting(baseSubjectIDs) { _ = client.noteSubjectAdd(noteId: id, subjectId: sid) }
             for sid in baseSubjectIDs.subtracting(now) { _ = client.noteSubjectRemove(noteId: id, subjectId: sid) }
+            // 标签：先去掉删掉的，再按界面上的先后顺序加新的（预览按添加先后显示）
+            let nowLabels = Set(labels.map(\.id))
+            for lid in baseLabelIDs.subtracting(nowLabels) { client.noteLabelRemove(noteId: id, labelId: lid) }
+            for l in labels where !baseLabelIDs.contains(l.id) { client.noteLabelAdd(noteId: id, labelId: l.id) }
             saved = true
             onSaved()
             dismiss()
@@ -183,6 +209,182 @@ struct NoteEditorView: View {
         }
         editor.tearDown()
         onSaved()
+    }
+}
+
+/// 笔记标签：已选标签胶囊（强调色，同列表右上角的样式）+「＋ 标签」。
+/// 点「＋ 标签」弹出小浮窗搜索 / 新建 / 删除标签，不占正文上方的空间；悬浮胶囊出现小叉去掉。
+/// 这一行固定高度，和案主行一样，正文位置不会跳。
+struct LabelPicker: View {
+    let client: DivinationClient
+    @Binding var selected: [NoteLabel]
+    var onLabelDeleted: (Int) -> Void = { _ in }    // 标签被彻底删除（通知外面同步）
+
+    @State private var hovered: Int?
+    @State private var showAdd = false
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(selected) { l in
+                    Text(l.name)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 120)                    // 太长 → 后面省略号
+                        .help(l.name)                            // 悬停看全名
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .foregroundStyle(Color.accentColor)
+                        .overlay(alignment: .topTrailing) {
+                            if hovered == l.id {
+                                Button { selected.removeAll { $0.id == l.id } } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.callout)
+                                        .foregroundStyle(.white, .gray)
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 6, y: -6)
+                            }
+                        }
+                        .onHover { inside in
+                            if inside { hovered = l.id } else if hovered == l.id { hovered = nil }
+                        }
+                }
+
+                Button { showAdd = true } label: {
+                    Label("标签", systemImage: "plus")
+                        .font(.subheadline)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showAdd, arrowEdge: .bottom) {
+                    LabelSearchPopover(
+                        client: client,
+                        excludedIDs: Set(selected.map(\.id)),
+                        onPick: { l in
+                            if !selected.contains(where: { $0.id == l.id }) { selected.append(l) }   // 加在最后
+                            showAdd = false
+                        },
+                        onDeleted: { id in
+                            selected.removeAll { $0.id == id }
+                            onLabelDeleted(id)
+                        }
+                    )
+                }
+            }
+            .padding(.top, 6).padding(.trailing, 6)          // 给小叉留空间
+            .padding(.bottom, 10)                            // 给横向滚动条留位置，不压住胶囊
+        }
+        .scrollIndicators(.visible)                          // 标签多了：一直显示滚动条
+        .frame(height: 44)
+    }
+}
+
+/// 「＋ 标签」弹出的小浮窗：输入搜索（空 = 全部）、点一个选上、回车或「新建」建新标签；
+/// 每行最右边的 × 彻底删除这个标签（先弹确认）。
+/// 单独成一个 View、自己持有 @State。
+/// ⚠️ macOS 的 popover 只在弹出那一刻按内容定一次大小，之后内容变多也不会长高（实测过）。
+/// 所以这里用固定大小，列表在里面滚动；并且在 init 里就先查好结果，第一眼就有列表。
+struct LabelSearchPopover: View {
+    let client: DivinationClient
+    let excludedIDs: Set<Int>                      // 已经选上的，不再列出
+    var onPick: (NoteLabel) -> Void
+    var onDeleted: (Int) -> Void
+
+    @State private var query = ""
+    @State private var matches: [NoteLabel]
+    @State private var pendingDelete: NoteLabel?
+
+    init(client: DivinationClient, excludedIDs: Set<Int>,
+         onPick: @escaping (NoteLabel) -> Void, onDeleted: @escaping (Int) -> Void) {
+        self.client = client
+        self.excludedIDs = excludedIDs
+        self.onPick = onPick
+        self.onDeleted = onDeleted
+        _matches = State(initialValue: client.labelSearch(keyword: ""))   // 弹出前就有内容
+    }
+
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("搜索或新建标签，如：疾病、感情", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .onSubmit(addTyped)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if matches.filter({ !excludedIDs.contains($0.id) }).isEmpty && trimmed.isEmpty {
+                        Text("还没有标签，输入名字后回车即可新建")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                    }
+                    ForEach(matches.filter { !excludedIDs.contains($0.id) }) { l in
+                        HStack(spacing: 6) {
+                            Button { onPick(l) } label: {
+                                Text(l.name)
+                                    .lineLimit(1).truncationMode(.tail)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .help(l.name)
+                            .buttonStyle(.plain)
+                            Button { pendingDelete = l } label: {
+                                Image(systemName: "xmark").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("彻底删除这个标签")
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                    }
+                    if !trimmed.isEmpty && !matches.contains(where: { $0.name == trimmed }) {
+                        Button(action: addTyped) {
+                            Label("新建标签「\(trimmed)」", systemImage: "plus.circle")
+                                .lineLimit(1).truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .foregroundStyle(Color.accentColor)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .scrollIndicators(.visible)                      // 标签多了：一直显示滚动条
+        }
+        .padding(12)
+        .frame(width: 284, height: 280, alignment: .top)       // 固定大小，见上方说明
+        .onChange(of: query) { _, _ in refresh() }
+        .alert("删除标签「\(pendingDelete?.name ?? "")」？",
+               isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
+            Button("删除", role: .destructive) {
+                if let l = pendingDelete, client.labelDelete(id: l.id) {
+                    onDeleted(l.id)
+                    refresh()
+                }
+                pendingDelete = nil
+            }
+            Button("取消", role: .cancel) { pendingDelete = nil }
+        } message: {
+            let uses = pendingDelete?.uses ?? 0
+            Text(uses > 0
+                 ? "有 \(uses) 处笔记或排盘正在用这个标签，删除后它们上面的这个标签都会被去掉，无法恢复。"
+                 : "删除后无法恢复。")
+        }
+    }
+
+    private func refresh() {
+        matches = client.labelSearch(keyword: trimmed)
+    }
+
+    /// 回车或点「新建」：同名已有就用已有的（标签名字唯一），没有就新建。
+    private func addTyped() {
+        guard !trimmed.isEmpty else { return }
+        if let l = matches.first(where: { $0.name == trimmed }) ?? client.labelCreate(name: trimmed) { onPick(l) }
     }
 }
 
@@ -204,37 +406,40 @@ struct SubjectPicker: View {
     @State private var matches: [Subject] = []
     @State private var hovered: Int?        // 悬浮中的案主 id → 显示删除小叉
 
+    /// 案主胶囊这一行的固定高度（胶囊 + 上方给小叉留的空间）。
+    private let chipRowHeight: CGFloat = 36
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 已选案主：悬浮时右上角出现小叉，点击删除
-            if !selected.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(selected) { s in
-                            Text(s.name)
-                                .font(.subheadline)
-                                .padding(.horizontal, 10).padding(.vertical, 5)
-                                .background(RoundedRectangle(cornerRadius: 5).fill(Color.gray.opacity(0.18)))
-                                .overlay(alignment: .topTrailing) {
-                                    if allowRemove && hovered == s.id {
-                                        Button { remove(s) } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .font(.callout)
-                                                .foregroundStyle(.white, .gray)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .offset(x: 6, y: -6)
+            // 已选案主：悬浮时右上角出现小叉，点击删除。
+            // 没有案主时这一行也留着（固定高度），正文的位置不会因为加减案主而上下跳。
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(selected) { s in
+                        Text(s.name)
+                            .font(.subheadline)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.gray.opacity(0.18)))
+                            .overlay(alignment: .topTrailing) {
+                                if allowRemove && hovered == s.id {
+                                    Button { remove(s) } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.callout)
+                                            .foregroundStyle(.white, .gray)
                                     }
+                                    .buttonStyle(.plain)
+                                    .offset(x: 6, y: -6)
                                 }
-                                .onHover { inside in
-                                    if inside { hovered = s.id }
-                                    else if hovered == s.id { hovered = nil }
-                                }
-                        }
+                            }
+                            .onHover { inside in
+                                if inside { hovered = s.id }
+                                else if hovered == s.id { hovered = nil }
+                            }
                     }
-                    .padding(.top, 6).padding(.trailing, 6)   // 给右上角小叉留出不被裁切的空间
                 }
+                .padding(.top, 6).padding(.trailing, 6)   // 给右上角小叉留出不被裁切的空间
             }
+            .frame(height: chipRowHeight)
 
             if allowAdd {
                 HStack(spacing: 8) {

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// 时间起卦页。不用 store：本地 @State 即可——每次从菜单进来都是全新实例，自动回到选时间页。
+/// 梅花易数（时间起卦）页。不用 store：本地 @State 即可——每次从菜单进来都是全新实例，自动回到选时间页。
 /// 选时间：日期(年/月/日)、时间(时/分) 用跨平台滚轮 WheelPicker 滚动选择。
-/// 排盘：meihua 定本卦/动爻/变卦，bazi 给左上角八字/公历/农历，lookup 取两卦完整数据，yilin 取崔氏易林。
+/// 排盘：meihua 定本卦/动爻/变卦，bazi 给左上角八字/公历/农历，lookup 取两卦完整数据，yilin 取崔氏易林，cangua 取参卦。
 struct TimeDivinationView: View {
     // 用分量存储，方便接滚轮
     @State private var year: Int
@@ -17,6 +17,7 @@ struct TimeDivinationView: View {
     @State private var showTimePicker = false   // 时间滚轮浮窗
 
     private let client = DivinationClient()
+    @AppStorage("wuxingColorOn") private var wuxingColorOn = false   // 五行颜色（和易经速查共用）
 
     private var dateString: String { String(format: "%04d-%02d-%02d", year, month, day) }
     private var timeString: String { String(format: "%02d:%02d", hour, minute) }
@@ -52,7 +53,7 @@ struct TimeDivinationView: View {
 
     private var inputPage: some View {
         VStack(spacing: 24) {
-            Text("时间起卦").font(.largeTitle).bold()
+            Text("梅花易数").font(.largeTitle).bold()
 
             // 两行：日期 / 时间，显示当前值；点击弹出对应的滚轮浮窗。
             VStack(spacing: 0) {
@@ -144,7 +145,8 @@ struct TimeDivinationView: View {
             original: ben,
             changed: bian,
             changingLines: [m.movingLine - 1],
-            yilin: client.yilin(org: m.benGua.value, chg: m.bianGua.value)
+            yilin: client.yilin(org: m.benGua.value, chg: m.bianGua.value),
+            cangua: client.cangua(org: m.benGua.value, chg: m.bianGua.value)
         )
     }
 
@@ -153,20 +155,25 @@ struct TimeDivinationView: View {
     private func resultPage(_ r: PaipanResult) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // 左上角返回：回到选时间页（保留已选时间）
-                Button { result = nil } label: {
-                    Image(systemName: "chevron.backward").font(.title2)
+                // 左上角返回：回到选时间页（保留已选时间）；右上角五行颜色（和易经速查共用同一个设置）
+                HStack {
+                    Button { result = nil } label: {
+                        Image(systemName: "chevron.backward").font(.title2)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    Toggle("五行颜色", isOn: $wuxingColorOn).fixedSize()
                 }
-                .buttonStyle(.plain)
 
                 timeInfoPanel(r.bazi)
 
                 DualGuaView(original: r.original, changed: r.changed,
-                            changingLines: r.changingLines, yilin: r.yilin,
+                            changingLines: r.changingLines, yilin: r.yilin, cangua: r.cangua,
                             readOnly: true)
                     .frame(maxWidth: .infinity)
             }
             .padding(40)
+            .environment(\.wuxingColorOn, wuxingColorOn)
         }
     }
 
@@ -184,11 +191,12 @@ struct TimeDivinationView: View {
     }
 }
 
-/// 一次排盘的结果（时间起卦页本地持有，不入 store）。
+/// 一次排盘的结果（梅花易数页本地持有，不入 store）。
 struct PaipanResult {
     let bazi: BaziResult?
     let original: Hexagram
     let changed: Hexagram
     let changingLines: Set<Int>
     let yilin: String?
+    let cangua: [CanGuaGroup]
 }

@@ -132,14 +132,7 @@ private struct NoteRow: View {
             // 右侧：上=label，下=时间
             VStack(alignment: .trailing, spacing: 4) {
                 if let labels = note.labels, !labels.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(labels.prefix(3), id: \.self) { l in
-                            Text(l).font(.caption2)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
+                    LabelChipsLine(labels: labels)
                 }
                 Spacer(minLength: 2)
                 stampLine("创建", note.createdAt)
@@ -160,6 +153,31 @@ private struct NoteRow: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+    }
+}
+
+/// 预览右上角的标签：最多 3 个，三个合起来的宽度固定（maxWidth），永远横排一行。
+/// 放不下时从后面开始截断：先截第 3 个，不够再截第 2 个，被截的那个显示成「疾…」，而不是整个消失。
+/// 做法：三个胶囊的 layoutPriority 依次是 3、2、1 —— HStack 先满足优先级高的，低的自动截断成省略号。
+struct LabelChipsLine: View {
+    let labels: [NoteLabel]
+    static let maxWidth: CGFloat = 120
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(labels.prefix(3).enumerated()), id: \.element.id) { i, l in
+                Text(l.name).font(.caption2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 20)                      // 至少留「一个字 + …」，不会被压成半个字
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                    .foregroundStyle(Color.accentColor)
+                    .layoutPriority(Double(3 - i))           // 越靠前越优先完整显示
+            }
+        }
+        .frame(maxWidth: Self.maxWidth, alignment: .trailing)
+        .help(labels.map(\.name).joined(separator: "、"))   // 悬停看全部标签
     }
 }
 
