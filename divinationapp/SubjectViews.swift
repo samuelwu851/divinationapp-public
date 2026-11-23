@@ -292,8 +292,11 @@ private struct BirthDateFields: View {
     var body: some View {
         HStack(spacing: 4) {
             TextField("年", text: $yearText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
                 .multilineTextAlignment(.center)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(YearWheel.fieldFill))   // 同年份滚轮的输入框：柔和灰白
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(YearWheel.fieldStroke, lineWidth: 1))
                 .frame(width: 64)
                 .focused($yearFocused)
                 .onSubmit(commitYear)
