@@ -20,6 +20,9 @@ struct divinationappApp: App {
         WindowGroup {
             MainView()
         }
+        #if os(macOS)
+        .commands { CasebookBackupCommands() }       // 菜单栏「文件 → 备份数据… / 恢复数据…」
+        #endif
         .defaultSize(width: 625, height: 780)   // 打开时的大小；切换页面不随内容变化
 
         #if os(macOS)

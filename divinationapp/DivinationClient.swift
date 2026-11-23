@@ -324,6 +324,20 @@ struct DivinationClient {
         return engine.dispatch(req)
     }
 
+    /// 调一个命令，解出结果；失败时第二项是后端给的错误说明（{"error": "..."} 里的中文），用来提示用户。
+    func callWithError<T: Decodable>(_ cmd: String, _ params: [String: Any]) -> (T?, String?) {
+        var req = params
+        req["cmd"] = cmd
+        guard let json = send(req) else { return (nil, "后端没有响应") }
+        if let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+           let err = obj["error"] as? String {
+            // 去掉 "ValueError: " 这类 Python 异常名，只留说明
+            let msg = err.range(of: ": ").map { String(err[$0.upperBound...]) } ?? err
+            return (nil, msg)
+        }
+        return (decode(json), nil)
+    }
+
     private func decode<T: Decodable>(_ json: String?) -> T? {
         guard let json else { return nil }
         let dec = JSONDecoder()

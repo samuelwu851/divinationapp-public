@@ -62,6 +62,13 @@ struct NotesWindowView: View {
             .onAppear { reload() }                     // 从编辑器 / 案主页返回时也刷新
             .onChange(of: filter) { _, _ in reloadNotes() }
             #if os(macOS)
+            .onReceive(NotificationCenter.default.publisher(for: CasebookBackup.restoredNotification)) { _ in
+                path = []                                  // 恢复了备份：回到列表、重新取数据
+                filter = NoteFilter()
+                reload()
+            }
+            #endif
+            #if os(macOS)
             .background(NotesWindowAccessor())         // 注册到窗口管理器（贴合主窗）
             #endif
         }

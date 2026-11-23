@@ -6,10 +6,12 @@ from divination.casebook.schema import MIGRATIONS
 
 _conn = None
 _attachments_dir = None
+_path = None
 
 
 def init(path: str) -> None:
-    global _conn, _attachments_dir
+    global _conn, _attachments_dir, _path
+    close()                     # 重新打开（比如恢复备份后）：先关掉旧连接
     # 图片放在数据库旁边的文件夹：casebook-debug.db → casebook-debug-attachments/
     # 调试库和正式库各用各的，互不干扰
     stem = os.path.splitext(os.path.basename(path))[0]
@@ -27,7 +29,23 @@ def init(path: str) -> None:
         conn.executescript(MIGRATIONS[i])
         conn.execute(f"PRAGMA user_version = {i + 1}")
     _conn = conn
+    _path = os.path.abspath(path)
 
+
+
+def close() -> None:
+    """关掉连接（恢复备份要替换数据库文件前调用）。"""
+    global _conn
+    if _conn is not None:
+        _conn.close()
+        _conn = None
+
+
+def path() -> str:
+    """当前数据库文件的路径。"""
+    if _path is None:
+        raise RuntimeError("database has not init yet")
+    return _path
 
 
 def get() -> sqlite3.Connection:

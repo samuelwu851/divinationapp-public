@@ -159,7 +159,12 @@ struct NoteEditorView: View {
         } message: {
             Text("当前的标题、正文、案主、标签或术数改动还没保存，确定要离开吗？")
         }
-        .onAppear(perform: load)
+        .onAppear {
+            #if os(macOS)
+            if !loaded { CasebookBackup.openEditors += 1 }   // 有笔记在编辑时不让恢复备份
+            #endif
+            load()
+        }
         .onDisappear(perform: finish)
         .onChange(of: chartWuxingColor) { _, on in editor.setWuxingColor(on) }   // 排盘窗口里勾选 → 卡片同步
     }
@@ -268,7 +273,11 @@ struct NoteEditorView: View {
 
     /// 离开编辑器（保存、放弃、关窗都会走到这里）：新建且没保存 → 整份删；否则清理没引用的排盘和图片。
     private func finish() {
-        guard !finished, let id = noteId else { return }
+        guard !finished else { return }
+        #if os(macOS)
+        CasebookBackup.openEditors = max(0, CasebookBackup.openEditors - 1)
+        #endif
+        guard let id = noteId else { finished = true; return }
         finished = true
         if createdHere && !saved {
             client.noteDelete(id: id)

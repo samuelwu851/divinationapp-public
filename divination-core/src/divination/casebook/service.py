@@ -5,7 +5,7 @@ import os
 import uuid
 from datetime import datetime
 
-from divination.casebook import body as body_mod, chart_facts, charts, db, repository as repo, shushu
+from divination.casebook import backup as backup_mod, body as body_mod, chart_facts, charts, db, repository as repo, shushu
 from divination.ganzhi.repository import solar_moment
 from datetime import datetime
 
@@ -426,6 +426,17 @@ def _note_list_cmd(req: dict) -> str:
         chart_query=req.get("chart_query"),       # 条件块列表，见 chart_facts.py
     )})
 
+def _backup_cmd(req: dict) -> str:
+    return _to_json(backup_mod.backup(req["path"]))
+
+def _backup_inspect_cmd(req: dict) -> str:
+    return _to_json(backup_mod.inspect(req["path"]))
+
+def _restore_cmd(req: dict) -> str:
+    result = backup_mod.restore(req["path"])
+    backfill_chart_facts()              # 旧备份里的排盘也补上搜索特征
+    return _to_json({"ok": True, **result})
+
 def _chart_search_forms_cmd(req: dict) -> str:
     return _to_json({"forms": chart_facts.forms()})
 
@@ -543,7 +554,10 @@ COMMANDS = {
     "note_restore": _note_restore_cmd,        # 从回收站恢复
     "trash_list": _trash_list_cmd,            # 回收站里的笔记
     "trash_empty": _trash_empty_cmd,          # 清空回收站
-    "chart_search_forms": _chart_search_forms_cmd,   # 按排盘搜索的面板（各术数能按什么搜）
+    "chart_search_forms": _chart_search_forms_cmd,
+    "casebook_backup": _backup_cmd,                  # 备份到用户选的 zip 文件
+    "casebook_backup_inspect": _backup_inspect_cmd,  # 看备份文件里是什么（恢复前确认）
+    "casebook_restore": _restore_cmd,                # 用备份替换全部数据（先自动备份当前的）   # 按排盘搜索的面板（各术数能按什么搜）
     "note_subject_add": _note_subject_add_cmd,
     "note_subject_remove": _note_subject_remove_cmd,
     "note_cleanup": _note_cleanup_cmd,
