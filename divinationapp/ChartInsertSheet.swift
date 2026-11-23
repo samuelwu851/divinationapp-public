@@ -14,7 +14,8 @@ struct ChartInsertSheet: View {
 
     let client: DivinationClient
     let noteId: Int
-    var onInserted: (Int) -> Void
+    var subjects: [Subject] = []          // 这份笔记当前的案主（八字可一键带入案主的生日）
+    var onInserted: (_ chartId: Int, _ type: String) -> Void     // 排盘 id + 排盘类型（编辑器据此自动勾上术数）
 
     @Environment(\.dismiss) private var dismiss
 
@@ -24,14 +25,17 @@ struct ChartInsertSheet: View {
     // 八字
     @State private var name = ""
     @State private var isMale = true
-    @State private var birth: DateParts = .now(defaultYear: 1990)
+    @State private var birth = DateInputModel(years: HistoricalCalendar.baziYears, initial: .now(defaultYear: 1990))
+    @State private var subjectDetails: [SubjectDetail] = []   // 案主的完整资料（含生日、性别）
+    @State private var filledFrom: Int?                       // 刚从哪位案主带入（高亮用）
+    @State private var incompleteHint: String?                // 点了资料不全的案主 → 说明缺什么
 
     // 易经速查：本卦 / 变卦，点爻变卦（同易经速查的变卦模式）
     @State private var original: Hexagram?
     @State private var changed: Hexagram?
 
     // 梅花易数（时间起卦）
-    @State private var moment: DateParts = .now()
+    @State private var moment = DateInputModel(years: 1950...2060, initial: .now())
 
     // 注册表里的类型：表单交出来的参数
     @State private var pluginParams: [String: Any]?
@@ -85,6 +89,9 @@ struct ChartInsertSheet: View {
                 original = client.lookup(63)
                 changed = original
             }
+            if subjectDetails.isEmpty {
+                subjectDetails = subjects.compactMap { client.subjectGet(id: $0.id) }
+            }
         }
         .onChange(of: kind) { _, _ in errorMessage = nil; pluginParams = nil }
     }
@@ -93,6 +100,7 @@ struct ChartInsertSheet: View {
 
     private var baziForm: some View {
         VStack(spacing: 24) {
+            if !subjectDetails.isEmpty { subjectBaziRow }
             HStack(spacing: 16) {
                 Text("姓名").font(.title3)
                 TextField("可不填", text: $name)
@@ -111,8 +119,71 @@ struct ChartInsertSheet: View {
                 .labelsHidden()
                 .frame(width: 130)
             }
-            DateWheels(parts: $birth, years: Array(1900...2100))
+            CalendarModeSwitch(model: birth)
+            DateInputWheels(model: birth)
         }
+    }
+
+    /// 「插入案主八字：张三、李四」：点一位 → 把他的名字、性别、生日时间填进下面的表单（再点「插入」）。
+    /// 生日、时间、性别要齐全才能点；不齐的灰掉，悬停说明缺什么。
+    private var subjectBaziRow: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Text("插入案主八字：").font(.callout).foregroundStyle(.secondary)
+                // 不用 .disabled：macOS 上禁用的控件收不到鼠标悬停，.help 提示不会出现。
+                // 改成资料不全时灰色显示、点了在下面说明缺什么。
+                ForEach(subjectDetails, id: \.id) { d in
+                    let missing = Self.missingBirthInfo(d)
+                    Text(d.name)
+                        .font(.callout)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(filledFrom == d.id ? Color.accentColor.opacity(0.25)
+                                                                      : Color.gray.opacity(0.15)))
+                        .foregroundStyle(missing == nil ? Color.primary : Color.secondary)
+                        .opacity(missing == nil ? 1 : 0.6)
+                        .contentShape(Capsule())
+                        .onTapGesture {
+                            if let missing { incompleteHint = Self.incompleteText(d, missing) } else { fill(from: d) }
+                        }
+                        .help(missing.map { Self.incompleteText(d, $0) } ?? "带入 \(d.name) 的生日时间")
+                }
+            }
+            if let incompleteHint {
+                Text(incompleteHint).font(.caption).foregroundStyle(.secondary)
+            } else if subjectDetails.allSatisfy({ Self.missingBirthInfo($0) != nil }) {
+                Text("案主的生日、时间或性别还没填完整，可以在「案主」页面补上").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static func incompleteText(_ d: SubjectDetail, _ missing: String) -> String {
+        "\(d.name) 的资料不完整：缺\(missing)（在案主页面补上）"
+    }
+
+    /// 案主排八字缺什么（生日、时间、性别都要有，且年份在滚轮范围内）；齐全返回 nil。
+    private static func missingBirthInfo(_ d: SubjectDetail) -> String? {
+        var miss: [String] = []
+        if birthParts(d) == nil { miss.append(d.birthday == nil ? "生日" : (d.birthtime == nil ? "时间" : "有效的生日")) }
+        if d.gender == nil { miss.append("性别") }
+        return miss.isEmpty ? nil : miss.joined(separator: "、")
+    }
+
+    /// "1990-05-01" + "08:30" → DateParts；缺任何一项、格式不对或年份超出八字范围（公元 1–2200）都返回 nil。
+    private static func birthParts(_ d: SubjectDetail) -> DateParts? {
+        guard let b = d.birthday, let t = d.birthtime else { return nil }
+        let ymd = b.split(separator: "-").compactMap { Int($0) }
+        let hm = t.split(separator: ":").compactMap { Int($0) }
+        guard ymd.count == 3, hm.count == 2, HistoricalCalendar.baziYears.contains(ymd[0]) else { return nil }
+        return DateParts(year: ymd[0], month: ymd[1], day: ymd[2], hour: hm[0], minute: hm[1])
+    }
+
+    private func fill(from d: SubjectDetail) {
+        guard let parts = Self.birthParts(d), let g = d.gender else { return }
+        name = d.name
+        isMale = g == 1
+        birth.setSolar(parts)
+        filledFrom = d.id
+        incompleteHint = nil
     }
 
     // MARK: - 易经速查（点爻变卦）
@@ -145,10 +216,11 @@ struct ChartInsertSheet: View {
 
     private var meihuaForm: some View {
         VStack(spacing: 16) {
-            DateWheels(parts: $moment, years: Array(1950...2060))
+            CalendarModeSwitch(model: moment)
+            DateInputWheels(model: moment)
             HStack(spacing: 16) {
                 Text("地点：北京（默认）").foregroundStyle(.secondary)
-                Button("现在") { moment = .now() }
+                Button("现在") { moment.setSolar(.now()) }
             }
         }
     }
@@ -159,7 +231,8 @@ struct ChartInsertSheet: View {
         let id: Int?
         switch kind {
         case "bazi":
-            var p = birth.params
+            guard let b = birth.resolvedSolar() else { errorMessage = "农历日期换算失败"; return }
+            var p = b.params
             p["name"] = name.trimmingCharacters(in: .whitespaces)
             p["is_male"] = isMale
             id = client.chartCreate(noteId: noteId, type: "bazi", params: p)
@@ -168,13 +241,14 @@ struct ChartInsertSheet: View {
             id = client.chartCreate(noteId: noteId, type: "iching",
                                     params: ["org_value": org.value, "chg_value": chg.value])
         case "meihua":
-            id = client.chartCreate(noteId: noteId, type: "meihua", params: moment.params)
+            guard let m = moment.resolvedSolar() else { errorMessage = "农历日期换算失败"; return }
+            id = client.chartCreate(noteId: noteId, type: "meihua", params: m.params)
         default:
             guard let p = pluginParams else { errorMessage = "请先把参数填完整"; return }
             id = client.chartCreate(noteId: noteId, type: kind, params: p)
         }
         guard let id else { errorMessage = "排盘失败：引擎无响应"; return }
-        onInserted(id)
+        onInserted(id, kind)
         dismiss()
     }
 
@@ -197,38 +271,6 @@ struct DateParts {
         ["year": year, "month": month, "day": day, "hour": hour, "minute": minute]
     }
 
-    /// 当前年月的天数（换月后用来收回无效的日）。
-    var dayRange: [Int] {
-        let cal = Calendar.current
-        if let d = cal.date(from: DateComponents(year: year, month: month)),
-           let r = cal.range(of: .day, in: .month, for: d) { return Array(r) }
-        return Array(1...31)
-    }
-}
-
-/// 年 / 月 / 日 / 时 / 分 五个滚轮（同八字排盘页的样式）。
-private struct DateWheels: View {
-    @Binding var parts: DateParts
-    let years: [Int]
-
-    var body: some View {
-        HStack(spacing: 12) {
-            WheelPicker(title: "年", values: years, selection: $parts.year,
-                        visibleRows: 3, valueFont: .title2).frame(width: 104)
-            WheelPicker(title: "月", values: Array(1...12), format: { "\($0)月" },
-                        selection: $parts.month, visibleRows: 3, valueFont: .title2).frame(width: 80)
-            WheelPicker(title: "日", values: parts.dayRange, format: { "\($0)日" },
-                        selection: $parts.day, visibleRows: 3, valueFont: .title2).frame(width: 80)
-            WheelPicker(title: "时", values: Array(0...23), selection: $parts.hour,
-                        visibleRows: 3, valueFont: .title2).frame(width: 80)
-            WheelPicker(title: "分", values: Array(0...59), selection: $parts.minute,
-                        visibleRows: 3, valueFont: .title2).frame(width: 80)
-        }
-        .onChange(of: parts.month) { _, _ in clampDay() }
-        .onChange(of: parts.year) { _, _ in clampDay() }
-    }
-
-    private func clampDay() {
-        if parts.day > parts.dayRange.count { parts.day = parts.dayRange.count }
-    }
+    /// 当前年月有哪几天（历史公历：1582 年以前按儒略历，见 HistoricalCalendar）。
+    var dayRange: [Int] { HistoricalCalendar.days(year: year, month: month) }
 }

@@ -61,3 +61,26 @@ struct PenIcon: View {
         }
     }
 }
+
+/// 人形图标（案主）：圆头 + 半圆肩，线条风格同 PenIcon / NotebookIcon。
+struct PersonIcon: View {
+    var color: Color = .primary
+    var lineWidth: CGFloat = 1.8
+
+    var body: some View {
+        Canvas { ctx, size in
+            let u = min(size.width, size.height) / 24
+            let head = Path(ellipseIn: CGRect(x: 8 * u, y: 3.5 * u, width: 8 * u, height: 8 * u))
+            ctx.stroke(head, with: .color(color), lineWidth: lineWidth)
+
+            // 肩膀：从左下往上画一段弧到右下
+            var body = Path()
+            body.move(to: CGPoint(x: 4.5 * u, y: 20.5 * u))
+            body.addCurve(to: CGPoint(x: 19.5 * u, y: 20.5 * u),
+                          control1: CGPoint(x: 4.5 * u, y: 12.5 * u),
+                          control2: CGPoint(x: 19.5 * u, y: 12.5 * u))
+            ctx.stroke(body, with: .color(color),
+                       style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+        }
+    }
+}

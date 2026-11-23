@@ -133,4 +133,21 @@ ALTER TABLE chart_labels ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
 """
 
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2]
+# V3：笔记「用了哪些术数」统一只看 note_types（用户可以把自动勾上的术数叉掉，
+# 所以不能再用「手动标的 ∪ 排盘类型」现算）。插入排盘时由前端把该术数勾上，随保存写入。
+# 这里把已有笔记里排盘的类型补进 note_types，老笔记也能按术数搜到。
+SCHEMA_V3 = """
+INSERT OR IGNORE INTO note_types(note_id, type)
+SELECT DISTINCT note_id, type FROM charts;
+"""
+
+# gender: 1 male， 0 female
+SCHEMA_V4 = """
+ALTER TABLE subjects ADD COLUMN birthday  TEXT;     -- 'YYYY-MM-DD'，不知道就是 NULL
+ALTER TABLE subjects ADD COLUMN birthtime TEXT;     -- 'HH:MM'，不知道时辰就是 NULL
+ALTER TABLE subjects ADD COLUMN gender    INTEGER;  -- 1 男 / 0 女 / NULL 未填
+
+"""
+
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]

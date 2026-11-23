@@ -1,7 +1,16 @@
-"""bazi/service —— 八字组装层：调 repository 取历法数据，调 core 算八字。"""
-from datetime import datetime
+"""bazi/service —— 八字组装层：调 repository 取历法数据，调 core 算八字。
 
-from divination.ganzhi.repository import get_pre_and_next_jie, sizhu_of, jie_before, lunar_info
+时刻统一用 lunar_python 的 Solar（也接受 datetime）：支持公元 1–2200 年，
+1582 年以前按儒略历（同史书、万年历），见 ganzhi/repository 开头的说明。
+"""
+from datetime import datetime, timedelta
+
+from lunar_python import Solar
+
+from divination.ganzhi.repository import (
+    get_pre_and_next_jie, sizhu_of, jie_before, lunar_info,
+    seconds_between, solar_moment, to_solar, ymdhm,
+)
 from divination.ganzhi.model import GanZhi, TianGan
 from divination.bazi.core import (
     is_dayun_clockwise, qiyun_age, dayun_ganzhi, add_ymd, shishen, canggan_shishen,
@@ -25,23 +34,39 @@ def gz_detail(me: TianGan, gz: GanZhi, is_day: bool = False) -> dict:
     }
 
 
-def qiyun(birth: datetime, is_male: bool) -> tuple[int, int, int]:
-    """起运(岁, 月, 日)：顺排数到下一个节，逆排数到上一个节。"""
+# 八字支持的年份范围（前端滚轮 / 输入框同此范围）
+YEAR_MIN, YEAR_MAX = 1, 2200
+
+
+def moment(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> Solar:
+    """前端给的年月日时分 → 八字用的时刻；超出范围或日期不存在抛 ValueError（中文说明）。"""
+    if not YEAR_MIN <= year <= YEAR_MAX:
+        raise ValueError(f"年份超出范围：{year}（支持公元 {YEAR_MIN}–{YEAR_MAX} 年）")
+    return solar_moment(year, month, day, hour, minute)
+
+
+def _jie_delta(birth: "datetime | Solar", is_male: bool) -> timedelta:
+    """出生到起运所数的那个节之间的时间差：顺排数到下一个节，逆排数到上一个节。"""
     year_gan = sizhu_of(birth).year.gan
     pre, nxt = get_pre_and_next_jie(birth)
-    delta = (nxt - birth) if is_dayun_clockwise(year_gan, is_male) else (birth - pre)
-    return qiyun_age(delta)
+    if is_dayun_clockwise(year_gan, is_male):
+        return timedelta(seconds=seconds_between(birth, nxt))
+    return timedelta(seconds=seconds_between(pre, birth))
 
 
-def dayun(birth: datetime, is_male: bool, count: int = 11) -> dict:
+def qiyun(birth: "datetime | Solar", is_male: bool) -> tuple[int, int, int]:
+    """起运(岁, 月, 日)。"""
+    return qiyun_age(_jie_delta(birth, is_male))
+
+
+def dayun(birth: "datetime | Solar", is_male: bool, count: int = 11) -> dict:
     """大运排盘 + 交运时刻：十年一换，交运落在某个「节」后第几天。"""
+    birth = to_solar(birth)
     sizhu = sizhu_of(birth)
     year_gan, month_gz = sizhu.year.gan, sizhu.month
     me = sizhu.day.gan
 
-    pre, nxt = get_pre_and_next_jie(birth)
-    delta = (nxt - birth) if is_dayun_clockwise(year_gan, is_male) else (birth - pre)
-    y, m, d = qiyun_age(delta)
+    y, m, d = qiyun_age(_jie_delta(birth, is_male))
     start = add_ymd(birth, y, m, d)  # 起运精确时刻 = 出生 + 起运岁月日
 
     ganzhis = dayun_ganzhi(year_gan, month_gz, is_male, count + 1)   # 取 count 步
@@ -51,7 +76,7 @@ def dayun(birth: datetime, is_male: bool, count: int = 11) -> dict:
         jie_name, offset = jie_before(t)
         steps.append({
             **gz_detail(me, gz),
-            "start_year": t.year,
+            "start_year": t.getYear(),
             "start_age": y + 10 * i,
             "jie": jie_name,
             "offset_days": offset,
@@ -68,7 +93,7 @@ def dayun(birth: datetime, is_male: bool, count: int = 11) -> dict:
 
     return {
         "qiyun": {"years": y, "months": m, "days": d},
-        "start_solar": start.strftime("%Y-%m-%d %H:%M"),
+        "start_solar": ymdhm(start),
         "jiaoyun": {
             "year_gan": jiaoyun_gan.hanzi,
             "jie": head["jie"],
@@ -78,15 +103,15 @@ def dayun(birth: datetime, is_male: bool, count: int = 11) -> dict:
         "steps": steps,
     }
 
-def pillars(birth: datetime) -> dict:
+def pillars(birth: "datetime | Solar") -> dict:
     """只排四柱（不需要性别）：公历/农历 + 年月日时四柱的干支、十神、藏干、纳音。
 
-    结构与 bazi_chart 里的同名字段一致；皇极经世等只要四柱的地方直接用它。
+    结构与 bazi_chart 里的同名字段一致；其他只需要四柱、不需要性别的地方直接用它。
     """
     sizhu = sizhu_of(birth)
     me = sizhu.day.gan                      # 日主
     return {
-        "input_time": birth.strftime("%Y-%m-%d %H:%M"),
+        "input_time": ymdhm(birth),
         "lunar_time": lunar_info(birth)["lunar_date"],
         "pillars": {
             "year":  gz_detail(me, sizhu.year),
@@ -97,7 +122,7 @@ def pillars(birth: datetime) -> dict:
     }
 
 
-def bazi_chart(birth: datetime, is_male: bool) -> dict:
+def bazi_chart(birth: "datetime | Solar", is_male: bool) -> dict:
     base = pillars(birth)
     me = sizhu_of(birth).day.gan            # 日主
 
@@ -123,7 +148,7 @@ def bazi_chart(birth: datetime, is_male: bool) -> dict:
     return res
 
     
-def liuyue(birth: datetime, target_year: int) -> dict:
+def liuyue(birth: "datetime | Solar", target_year: int) -> dict:
     """某流年的 12 流月：月柱 + 天干十神 + 藏干十神(都相对命主日主)。
     日主只看日干，与性别无关，故 liuyue 不需要 is_male。"""
     me = sizhu_of(birth).day.gan
@@ -134,16 +159,19 @@ def liuyue(birth: datetime, target_year: int) -> dict:
     return {"year": target_year, "months": months}
 
 
+def _birth(req: dict) -> Solar:
+    return moment(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
+
 def _chart_cmd(req: dict) -> str:
-    birth = datetime(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
+    birth = _birth(req)
     return json.dumps(bazi_chart(birth, req["is_male"]), ensure_ascii=False)
 
 def _pillars_cmd(req: dict) -> str:
-    birth = datetime(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
+    birth = _birth(req)
     return json.dumps(pillars(birth), ensure_ascii=False)
 
 def _liuyue_cmd(req: dict) -> str:
-    birth = datetime(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
+    birth = _birth(req)
     return json.dumps(liuyue(birth, req["target_year"]), ensure_ascii=False)
 
 COMMANDS = {"bazi_chart": _chart_cmd, "bazi_pillars": _pillars_cmd, "liuyue": _liuyue_cmd}

@@ -3,9 +3,11 @@ import base64
 import json
 import os
 import uuid
+from datetime import datetime
 
-from divination.casebook import body as body_mod, charts, db, repository as repo
-
+from divination.casebook import body as body_mod, charts, db, repository as repo, shushu
+from divination.ganzhi.repository import solar_moment
+from datetime import datetime
 
 def get_note(note_id: int) -> dict:
     note = repo.get_note(note_id)
@@ -13,21 +15,26 @@ def get_note(note_id: int) -> dict:
         raise LookupError(f"笔记不存在：{note_id}")
     note["subjects"] = repo.get_note_subjects(note_id)
     note["labels"] = repo.get_note_labels(note_id)
+    note["shushu"] = shushu.sort_and_name(repo.get_note_types(note_id))
     return note
 
 
-# 列出所有笔记 
-def list_notes() -> list[dict]:
-    notes = repo.list_notes()
+# 列出笔记（可按关键字 / 标签 / 案主 / 术数筛选，所有条件同时满足，见 repo.list_notes）
+def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=()) -> list[dict]:
+    notes = repo.list_notes((keyword or "").strip(), label_ids or (), subject_ids or (), shushu_codes or ())
     by_note = {}
     for row in repo.get_all_note_subjects():
         by_note.setdefault(row["note_id"], []).append({"id": row["id"], "name": row["name"]})
     labels_by_note = {}
     for row in repo.get_all_note_labels():
         labels_by_note.setdefault(row["note_id"], []).append({"id": row["id"], "name": row["name"]})
+    types_by_note = {}
+    for row in repo.get_all_note_types():
+        types_by_note.setdefault(row["note_id"], []).append(row["type"])
     for n in notes:
         n["subjects"] = by_note.get(n["id"], [])
         n["labels"] = labels_by_note.get(n["id"], [])
+        n["shushu"] = shushu.sort_and_name(types_by_note.get(n["id"], []))
     return notes
 
 
@@ -123,6 +130,11 @@ def _clean_label_name(name: str) -> str:
 
 def search_labels(keyword: str) -> list[dict]:
     return repo.search_labels(keyword.strip())
+
+
+def list_labels() -> list[dict]:
+    """全部标签（搜索筛选的下拉菜单用），常用的在前。"""
+    return repo.search_labels("", limit=100000)
 
 
 def create_label(name: str) -> dict:
@@ -243,13 +255,99 @@ def search_subjects(keyword: str) -> list[dict]:
     return repo.search_subjects(keyword)
 
 
-def create_subject(name: str, remark: str = "") -> dict:
+def create_subject(name: str, remark: str = "", birthday: str | None = None, birthtime: str | None = None, gender: int | None = None) -> dict:
     name = name.strip()
     if not name:
         raise ValueError("案主名字不能为空")
+    birthday, birthtime, gender = _clean_subject_fields(birthday, birthtime, gender)
     with db.get():
-        subject_id = repo.insert_subject(name, remark)
+        subject_id = repo.insert_subject(name, (remark or "").strip(), birthday, birthtime, gender)
     return repo.get_subject(subject_id)
+
+
+def list_subjects() -> list[dict]:
+    return repo.list_subjects()
+
+
+def get_subject(subject_id: int) -> dict:
+    """案主详情 + 和他关联的所有笔记（同笔记列表的格式）。"""
+    s = repo.get_subject(subject_id)
+    if s is None:
+        raise LookupError(f"案主不存在：{subject_id}")
+    s["notes"] = list_notes(subject_ids=[subject_id])
+    return s
+
+def update_subject(subject_id: int, name: str, remark: str = "",
+                   birthday: str | None = None, birthtime: str | None = None,
+                   gender: int | None = None) -> dict:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("案主名字不能为空")
+    birthday, birthtime, gender = _clean_subject_fields(birthday, birthtime, gender)
+    with db.get():
+        if repo.update_subject(subject_id, name, (remark or "").strip(),
+                               birthday, birthtime, gender) == 0:
+            raise LookupError(f"案主不存在：{subject_id}")
+    return get_subject(subject_id)
+
+
+def delete_subject(subject_id: int) -> None:
+    """删除案主：只解除和笔记的关联，笔记本身保留。"""
+    with db.get():
+        if repo.delete_subject(subject_id) == 0:
+            raise LookupError(f"案主不存在：{subject_id}")
+
+def _clean_birthday(text: str) -> str:
+    """生日 'YYYY-MM-DD' → 检查这天在历史公历里存在，返回补足位数的写法（如 '618-1-5' → '0618-01-05'）。
+
+    不用 datetime.strptime：它只认格里历，1582 年以前按儒略历才有的日子（如 1000-02-29）会被误判成不存在，
+    而 1582-10-05 到 10-14 这 10 天（历史上不存在）反而能通过。改用和八字同一套历史公历（见 ganzhi/repository）。
+    """
+    parts = text.split("-")
+    try:
+        y, m, d = (int(x) for x in parts)
+        if len(parts) != 3:
+            raise ValueError
+    except ValueError:
+        raise ValueError(f"生日格式不对：{text}（应为 YYYY-MM-DD）") from None
+    if not 1 <= y <= 9999:
+        raise ValueError(f"生日年份不对：{y}")
+    solar_moment(y, m, d)          # 日期不存在会抛 ValueError（中文说明）
+    return f"{y:04d}-{m:02d}-{d:02d}"
+
+
+def _clean_subject_fields(birthday, birthtime, gender):
+    birthday = (birthday or "").strip() or None
+    birthtime = (birthtime or "").strip() or None
+    if birthday is not None:
+        birthday = _clean_birthday(birthday)
+    if birthtime is not None:
+        if birthday is None:
+            raise ValueError("只填时间不填日期没有意义")
+        try:
+            datetime.strptime(birthtime, "%H:%M")
+        except ValueError:
+            raise ValueError(f"时间格式不对：{birthtime}（应为 HH:MM）") from None
+    if gender not in (None, 0, 1):
+        raise ValueError("性别只能是 1（男）、0（女）或不填")
+    return birthday, birthtime, gender
+
+# ---------- 术数：笔记用了哪些术数 ----------
+
+def add_note_shushu(note_id: int, code: str) -> dict:
+    if not shushu.is_known(code):
+        raise ValueError(f"不认识的术数：{code}")
+    if repo.get_note(note_id) is None:
+        raise LookupError(f"笔记不存在：{note_id}")
+    with db.get():
+        repo.link_note_type(note_id, code)
+    return {"shushu": shushu.sort_and_name(repo.get_note_types(note_id))}
+
+
+def remove_note_shushu(note_id: int, code: str) -> dict:
+    with db.get():
+        repo.unlink_note_type(note_id, code)
+    return {"shushu": shushu.sort_and_name(repo.get_note_types(note_id))}
 
 
 # ---------- 命令：取参数 → 调业务 → 转 JSON (类似java里的controller层) ----------
@@ -265,7 +363,10 @@ def _note_get_cmd(req: dict) -> str:
     return _to_json(get_note(req["note_id"]))
 
 def _note_list_cmd(req: dict) -> str:
-    return _to_json({"notes": list_notes()})
+    # 筛选条件都可省；标签 / 案主 / 术数都是列表，可以多选（都要满足）
+    return _to_json({"notes": list_notes(
+        req.get("keyword", ""), req.get("label_ids", []), req.get("subject_ids", []), req.get("shushu", []),
+    )})
 
 def _note_update_cmd(req: dict) -> str:
     return _to_json(update_note(req["note_id"], req.get("title", ""), req.get("body", "")))
@@ -326,7 +427,34 @@ def _subject_search_cmd(req: dict) -> str:
     return _to_json({"subjects": search_subjects(req.get("keyword", ""))})
 
 def _subject_create_cmd(req: dict) -> str:
-    return _to_json(create_subject(req["name"], req.get("remark", "")))
+    return _to_json(create_subject(req["name"], req.get("remark", ""),
+        req.get("birthday"), req.get("birthtime"), req.get("gender"),))
+
+def _subject_list_cmd(req: dict) -> str:
+    return _to_json({"subjects": list_subjects()})
+
+def _subject_get_cmd(req: dict) -> str:
+    return _to_json(get_subject(req["subject_id"]))
+
+def _subject_update_cmd(req: dict) -> str:
+    return _to_json(update_subject(req["subject_id"], req["name"], req.get("remark", ""),
+        req.get("birthday"), req.get("birthtime"), req.get("gender"),))
+
+def _subject_delete_cmd(req: dict) -> str:
+    delete_subject(req["subject_id"])
+    return _to_json({"ok": True})
+
+def _label_list_cmd(req: dict) -> str:
+    return _to_json({"labels": list_labels()})
+
+def _shushu_list_cmd(req: dict) -> str:
+    return _to_json({"shushu": shushu.all_items()})
+
+def _note_shushu_add_cmd(req: dict) -> str:
+    return _to_json(add_note_shushu(req["note_id"], req["code"]))
+
+def _note_shushu_remove_cmd(req: dict) -> str:
+    return _to_json(remove_note_shushu(req["note_id"], req["code"]))
 
 
 COMMANDS = {
@@ -351,4 +479,12 @@ COMMANDS = {
     "chart_label_remove": _chart_label_remove_cmd,
     "subject_search": _subject_search_cmd,
     "subject_create": _subject_create_cmd,
+    "subject_list": _subject_list_cmd,
+    "subject_get": _subject_get_cmd,
+    "subject_update": _subject_update_cmd,
+    "subject_delete": _subject_delete_cmd,
+    "label_list": _label_list_cmd,
+    "shushu_list": _shushu_list_cmd,
+    "note_shushu_add": _note_shushu_add_cmd,
+    "note_shushu_remove": _note_shushu_remove_cmd,
 }

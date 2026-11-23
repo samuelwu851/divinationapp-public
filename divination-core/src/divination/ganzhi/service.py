@@ -87,6 +87,15 @@ def solar_to_lunar_json(year: int, month: int, day: int,
     )
 
 
+def _lunar_to_solar_json(req: dict) -> str:
+    s = repository.lunar_to_solar_moment(
+        req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0),
+        bool(req.get("is_leap", False)),
+    )
+    return json.dumps({"year": s.getYear(), "month": s.getMonth(), "day": s.getDay(),
+                       "hour": s.getHour(), "minute": s.getMinute()})
+
+
 def lunar_months_json(year: int) -> str:
     """某农历年的月份结构（供农历选择器加载月份列）。"""
     return json.dumps(
@@ -105,4 +114,6 @@ COMMANDS = {
         req.get("hour", 0), req.get("minute", 0),
     ),
     "lunar_months": lambda req: lunar_months_json(req["year"]),
+    # 农历 → 公历（前端农历选时间：先换成公历，再走原来的排盘命令）
+    "lunar_to_solar": lambda req: _lunar_to_solar_json(req),
 }

@@ -40,7 +40,8 @@ def _yilin_text(org: int, chg: int) -> str | None:
 
 def _bazi(p: dict) -> tuple[str, dict]:
     name = (p.get("name") or "").strip()
-    chart = bazi_service.bazi_chart(_moment(p), bool(p["is_male"]))
+    birth = bazi_service.moment(p["year"], p["month"], p["day"], p.get("hour", 0), p.get("minute", 0))
+    chart = bazi_service.bazi_chart(birth, bool(p["is_male"]))   # 公元 1–2200 年，1582 年以前按儒略历
     return name, {"name": name, "chart": chart}
 
 

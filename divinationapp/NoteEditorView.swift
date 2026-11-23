@@ -10,7 +10,8 @@ enum NoteEditTarget: Hashable {
 ///
 /// - 新建：一进来就在数据库里建一份空笔记，之后和「编辑」走同一套流程
 ///   （插入排盘、图片都需要先有 note_id）。没保存就离开 → 整份删掉。
-/// - 保存：标题/正文走 note_update；案主、标签对比基线做差量增删。
+/// - 保存：标题/正文走 note_update；案主、标签、术数对比基线做差量增删。
+/// - 插入某种排盘时，自动勾上对应的术数（用户可以再叉掉）。
 /// - 离开时：调 note_cleanup，清掉正文里已经不引用的排盘和图片
 ///   （编辑中插入后又删掉的、或放弃修改的）。
 struct NoteEditorView: View {
@@ -31,6 +32,8 @@ struct NoteEditorView: View {
     @State private var title = ""
     @State private var subjects: [Subject] = []
     @State private var labels: [NoteLabel] = []
+    @State private var shushu: [Shushu] = []            // 用了哪些术数（按清单顺序）
+    @State private var shushuCatalog: [Shushu] = []     // 术数清单
     @State private var bodyChanged = false      // 网页编辑器通知「正文改过」
     @State private var loaded = false
 
@@ -38,6 +41,7 @@ struct NoteEditorView: View {
     @State private var baseTitle = ""
     @State private var baseSubjectIDs: Set<Int> = []
     @State private var baseLabelIDs: Set<Int> = []
+    @State private var baseShushu: Set<String> = []
 
     @State private var showUnsavedAlert = false
     @State private var showInsertChart = false
@@ -53,6 +57,7 @@ struct NoteEditorView: View {
             || bodyChanged
             || Set(subjects.map(\.id)) != baseSubjectIDs
             || Set(labels.map(\.id)) != baseLabelIDs
+            || Set(shushu.map(\.code)) != baseShushu
     }
 
     var body: some View {
@@ -67,13 +72,19 @@ struct NoteEditorView: View {
             // 标签（算什么事）：同样只改本地，保存时写后端
             LabelPicker(client: client, selected: $labels, onLabelDeleted: { labelDeleted($0) })
 
+            // 术数：同样只改本地，保存时写后端；插入排盘会自动勾上对应的术数
+            ShushuPicker(catalog: shushuCatalog, selected: $shushu)
+
             Divider()
 
             if let noteId {
                 NoteEditorWebView(controller: editor)
                     .padding(.horizontal, -20)                  // 网页自己留了左右边距
                     .sheet(isPresented: $showInsertChart) {
-                        ChartInsertSheet(client: client, noteId: noteId) { editor.insertChart(id: $0) }
+                        ChartInsertSheet(client: client, noteId: noteId, subjects: subjects) { id, type in
+                            editor.insertChart(id: id)
+                            addShushu(code: type)                  // 插了什么排盘就勾上什么术数
+                        }
                     }
                     .sheet(item: $openChart) { c in        // 只有非 macOS 会用到（macOS 开独立窗口）
                         ChartDetailView(client: client, chartId: c.id)
@@ -113,7 +124,7 @@ struct NoteEditorView: View {
             Button("放弃修改", role: .destructive) { dismiss() }
             Button("继续编辑", role: .cancel) {}
         } message: {
-            Text("当前的标题、正文、案主或标签改动还没保存，确定要离开吗？")
+            Text("当前的标题、正文、案主、标签或术数改动还没保存，确定要离开吗？")
         }
         .onAppear(perform: load)
         .onDisappear(perform: finish)
@@ -122,6 +133,7 @@ struct NoteEditorView: View {
 
     private func load() {
         guard !loaded else { return }
+        shushuCatalog = client.shushuList()
         var content = ""
         switch target {
         case .new:
@@ -136,12 +148,14 @@ struct NoteEditorView: View {
                 content = n.body ?? ""
                 subjects = n.subjects ?? []
                 labels = n.labels ?? []
+                shushu = n.shushu ?? []
             }
         }
         // 记录基线（新建则全为空）
         baseTitle = title
         baseSubjectIDs = Set(subjects.map(\.id))
         baseLabelIDs = Set(labels.map(\.id))
+        baseShushu = Set(shushu.map(\.code))
         loaded = true
 
         guard let noteId else { return }
@@ -165,6 +179,14 @@ struct NoteEditorView: View {
         labels.removeAll { $0.id == id }
         baseLabelIDs.remove(id)
         if !fromEditor { editor.labelDeleted(id: id) }
+    }
+
+    /// 勾上一个术数（已勾上 / 不在清单里就不动），保持清单顺序。
+    private func addShushu(code: String) {
+        guard !shushu.contains(where: { $0.code == code }),
+              shushuCatalog.contains(where: { $0.code == code }) else { return }
+        let picked = Set(shushu.map(\.code)).union([code])
+        shushu = shushuCatalog.filter { picked.contains($0.code) }
     }
 
     /// 「插入排盘」：光标在正文里才打开排盘面板，排完插到光标处；否则提示先在正文里点一下。
@@ -192,6 +214,10 @@ struct NoteEditorView: View {
             let nowLabels = Set(labels.map(\.id))
             for lid in baseLabelIDs.subtracting(nowLabels) { client.noteLabelRemove(noteId: id, labelId: lid) }
             for l in labels where !baseLabelIDs.contains(l.id) { client.noteLabelAdd(noteId: id, labelId: l.id) }
+            // 术数：同样差量增删
+            let nowShushu = Set(shushu.map(\.code))
+            for c in baseShushu.subtracting(nowShushu) { client.noteShushuRemove(noteId: id, code: c) }
+            for c in nowShushu.subtracting(baseShushu) { client.noteShushuAdd(noteId: id, code: c) }
             saved = true
             onSaved()
             dismiss()
@@ -209,6 +235,70 @@ struct NoteEditorView: View {
         }
         editor.tearDown()
         onSaved()
+    }
+}
+
+/// 笔记用了哪些术数：已选胶囊（悬浮出现小叉去掉）+「＋ 术数」下拉菜单（只列还没选的）。
+/// 这一行固定高度，正文位置不会跳。
+struct ShushuPicker: View {
+    let catalog: [Shushu]
+    @Binding var selected: [Shushu]
+
+    @State private var hovered: String?
+
+    private var remaining: [Shushu] {
+        let have = Set(selected.map(\.code))
+        return catalog.filter { !have.contains($0.code) }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(selected) { s in
+                    Text(s.name)
+                        .font(.subheadline)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .overlay(alignment: .topTrailing) {
+                            if hovered == s.code {
+                                Button { selected.removeAll { $0.code == s.code } } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.callout)
+                                        .foregroundStyle(.white, .gray)
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 6, y: -6)
+                            }
+                        }
+                        .onHover { inside in
+                            if inside { hovered = s.code } else if hovered == s.code { hovered = nil }
+                        }
+                }
+
+                if !remaining.isEmpty {
+                    Menu {
+                        ForEach(remaining) { s in
+                            Button(s.name) {
+                                let picked = Set(selected.map(\.code)).union([s.code])
+                                selected = catalog.filter { picked.contains($0.code) }   // 按清单顺序
+                            }
+                        }
+                    } label: {
+                        Label("术数", systemImage: "plus")
+                            .font(.subheadline)
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Capsule().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                            .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                }
+            }
+            .padding(.top, 6).padding(.trailing, 6)          // 给小叉留空间
+        }
+        .frame(height: 34)
     }
 }
 

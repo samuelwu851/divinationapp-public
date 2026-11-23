@@ -2,10 +2,17 @@
 本层通过具体时刻返回干支历
 用lunar_python拿到干支，并且转换成干支编码
 
+关于「时刻」：可以传 Python 的 datetime，也可以传 lunar_python 的 Solar。
+- 两者的区别在 1582 年以前：lunar_python 按历史惯例，1582-10-15 之前的公历日期是**儒略历**
+  （和史书、万年历一致；1582-10-05 到 10-14 这 10 天不存在），而 Python 的 datetime 永远是格里历。
+- 所以八字这种要支持古代日期的地方，统一用 Solar 表示时刻，算「差几天」用儒略日（天文学上连续计数的天数，
+  不分历法），不用 datetime 相减——否则 1000-02-29 这种儒略历才有的日子会直接报错。
 """
+import math
 from datetime import datetime
 
 from lunar_python import Lunar, LunarYear, Solar
+from lunar_python.util import SolarUtil
 
 from divination.ganzhi.model import DiZhi, GanZhi, SiZhu, TianGan
 
@@ -19,12 +26,46 @@ def _parse_ganzhi(text: str) -> GanZhi:
     return GanZhi(gan, zhi)
 
 
-def _lunar(moment: datetime):
+def to_solar(moment: "datetime | Solar") -> Solar:
+    """datetime 或 Solar → Solar（datetime 的年月日按「历史公历」理解，见文件开头）。"""
+    if isinstance(moment, Solar):
+        return moment
+    return Solar.fromYmdHms(moment.year, moment.month, moment.day,
+                            moment.hour, moment.minute, moment.second)
+
+
+def days_in_month(year: int, month: int) -> int:
+    """历史公历某月的最后一天是几号（1582 年以前按儒略历：每 4 年一闰）。
+    1582 年 10 月特殊：5–14 日不存在，但最后一天仍是 31 日。"""
+    return 31 if (year, month) == (1582, 10) else SolarUtil.getDaysOfMonth(year, month)
+
+
+def solar_moment(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> Solar:
+    """前端给的年月日时分 → Solar；日期不存在就抛 ValueError（中文说明）。"""
+    if not 1 <= month <= 12:
+        raise ValueError(f"月份不对：{month}")
+    if year == 1582 and month == 10 and 5 <= day <= 14:
+        raise ValueError("1582 年 10 月 5 日到 14 日在历史上不存在（儒略历改格里历时跳过了这 10 天）")
+    if not 1 <= day <= days_in_month(year, month):
+        raise ValueError(f"日期不存在：{year} 年 {month} 月没有 {day} 日")
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"时间不对：{hour}:{minute:02d}")
+    return Solar.fromYmdHms(year, month, day, hour, minute, 0)
+
+
+def seconds_between(a: "datetime | Solar", b: "datetime | Solar") -> int:
+    """b − a 相隔多少秒（用儒略日算，跨历法、公元前都没问题）。"""
+    return round((to_solar(b).getJulianDay() - to_solar(a).getJulianDay()) * 86400)
+
+
+def ymdhm(moment: "datetime | Solar") -> str:
+    """'YYYY-MM-DD HH:MM'（公元 1000 年以前年份补足 4 位，如 0618）。"""
+    return to_solar(moment).toYmdHms()[:16]
+
+
+def _lunar(moment: "datetime | Solar"):
     """把一个时刻交给 lunar_python，拿到它的 Lunar 对象。"""
-    return Solar.fromYmdHms(
-        moment.year, moment.month, moment.day,
-        moment.hour, moment.minute, moment.second,
-    ).getLunar()
+    return to_solar(moment).getLunar()
 
 
 def sizhu_of(jieqi_moment: datetime, local_moment: datetime | None = None) -> SiZhu:
@@ -89,6 +130,22 @@ def lunar_to_solar(year: int, month: int, day: int,
                     s.getHour(), s.getMinute(), s.getSecond())
 
 
+def lunar_to_solar_moment(year: int, month: int, day: int, hour: int = 0, minute: int = 0,
+                          is_leap: bool = False) -> Solar:
+    """农历 → 公历时刻（Solar，支持古代：1582 年以前的公历是儒略历）。
+    month 填 1–12，闰月 is_leap=True；这个月不存在、或这天超过当月天数，抛 ValueError（中文说明）。"""
+    want = -month if is_leap else month
+    found = next((m for m in LunarYear.fromYear(year).getMonths()
+                  if m.getYear() == year and m.getMonth() == want), None)
+    if found is None:
+        raise ValueError(f"农历 {year} 年没有{'闰' if is_leap else ''}{month} 月")
+    if not 1 <= day <= found.getDayCount():
+        raise ValueError(f"农历 {year} 年{'闰' if is_leap else ''}{month} 月只有 {found.getDayCount()} 天")
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"时间不对：{hour}:{minute:02d}")
+    return Lunar.fromYmdHms(year, want, day, hour, minute, 0).getSolar()
+
+
 def lichun_of(solar_year: int) -> datetime:
     """某公历年的立春时刻(北京时间)。"""
     lc = _lunar(datetime(solar_year, 6, 1)).getJieQiTable()["立春"]
@@ -98,8 +155,8 @@ def lichun_of(solar_year: int) -> datetime:
 
 def solar_to_lunar(year: int, month: int, day: int,
                    hour: int = 0, minute: int = 0) -> dict:
-    """公历 → 农历：年 / 月(1-12) / 是否闰月 / 日。"""
-    lunar = _lunar(datetime(year, month, day, hour, minute))
+    """公历 → 农历：年 / 月(1-12) / 是否闰月 / 日。公历按历史公历（1582 年以前儒略历）。"""
+    lunar = _lunar(solar_moment(year, month, day, hour, minute))
     m = lunar.getMonth()
     return {
         "lunar_year": lunar.getYear(),
@@ -133,15 +190,13 @@ def _solar_to_datetime(s) -> datetime:
     return datetime(s.getYear(), s.getMonth(), s.getDay(),
                 s.getHour(), s.getMinute(), s.getSecond())
 
-def get_pre_and_next_jie(time: datetime) -> tuple[datetime, datetime]:
+def get_pre_and_next_jie(time: "datetime | Solar") -> tuple[Solar, Solar]:
+    """time 前后最近的两个「节」的时刻（Solar：公元 1 年初的前一个节在公元前，datetime 表示不了）。"""
     lunar = _lunar(time)
-    pre = lunar.getPrevJie().getSolar()
-    nxt = lunar.getNextJie().getSolar()
-    return (_solar_to_datetime(pre), _solar_to_datetime(nxt))
+    return lunar.getPrevJie().getSolar(), lunar.getNextJie().getSolar()
 
 
-def jie_before(time: datetime) -> tuple[str, int]:
+def jie_before(time: "datetime | Solar") -> tuple[str, int]:
     """time 前面最近的「节」：返回 (节名, 相隔天数)。用于「某节后第几天交运」。"""
     jie = _lunar(time).getPrevJie()
-    jie_dt = _solar_to_datetime(jie.getSolar())
-    return jie.getName(), (time - jie_dt).days
+    return jie.getName(), math.floor(seconds_between(jie.getSolar(), time) / 86400)

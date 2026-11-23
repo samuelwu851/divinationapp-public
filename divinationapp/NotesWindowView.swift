@@ -3,59 +3,96 @@ import SwiftUI
 import AppKit
 #endif
 
-/// 笔记（案例库）独立窗口：顶部搜索栏 + 笔记列表，右下角悬浮「笔」按钮新建。
-/// 列表点一条 → 进编辑器（编辑）；点笔 → 进编辑器（新建）。编辑器是独立一页（NavigationStack 推入）。
+/// 笔记窗口里的页面（NavigationStack 的路径）：编辑器、案主列表、某位案主。
+enum NotesRoute: Hashable {
+    case editor(NoteEditTarget)
+    case subjects
+    case subject(Int)
+}
+
+/// 笔记（案例库）独立窗口：顶部搜索栏 + 筛选（标签 / 案主 / 术数）+ 笔记列表；
+/// 底部菜单栏（同主窗口的胶囊样式）：笔 = 新建笔记，人 = 案主。
+/// 点列表一条 → 进编辑器。编辑器、案主页都是推入的下一页（左上角返回）。
 struct NotesWindowView: View {
     private let client = DivinationClient()
 
-    @State private var search = ""
+    @State private var path: [NotesRoute] = []
+    @State private var filter = NoteFilter()
     @State private var notes: [Note] = []
-    @State private var editTarget: NoteEditTarget?
+
+    // 筛选下拉菜单的选项（每次回到列表时刷新）
+    @State private var allLabels: [NoteLabel] = []
+    @State private var allSubjects: [Subject] = []
+    @State private var allShushu: [Shushu] = []
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
-                VStack(spacing: 0) {
-                    searchBar
-                    Divider()
-                    list
-                }
-
-                // 右下角悬浮「笔」按钮（样式参考发推按钮：实心圆 + 阴影）
-                Button { editTarget = .new } label: {
-                    PenIcon(color: .white, lineWidth: 2)
-                        .frame(width: 24, height: 24)
-                        .padding(16)
-                        .background(Circle().fill(Color.accentColor))
-                        .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 3)
-                }
-                .buttonStyle(.plain)
-                .padding(20)
+        NavigationStack(path: $path) {
+            VStack(spacing: 0) {
+                searchBar
+                filterBar
+                Divider()
+                list
+                Divider()
+                bottomBar
             }
             .frame(minWidth: 300, minHeight: 360)
             .background(PatternBackground())          // 与排盘同款背景纹理
-            .navigationDestination(item: $editTarget) { target in
-                NoteEditorView(client: client, target: target) { reload() }
+            .navigationDestination(for: NotesRoute.self) { route in
+                switch route {
+                case .editor(let target):
+                    NoteEditorView(client: client, target: target) { reload() }
+                case .subjects:
+                    SubjectListView(client: client) { path.append($0) }
+                case .subject(let id):
+                    SubjectDetailView(client: client, subjectId: id) { path.append($0) }
+                }
             }
+            .onAppear { reload() }                     // 从编辑器 / 案主页返回时也刷新
+            .onChange(of: filter) { _, _ in reloadNotes() }
             #if os(macOS)
             .background(NotesWindowAccessor())         // 注册到窗口管理器（贴合主窗）
             #endif
         }
-        .onAppear { reload() }
     }
 
-    // MARK: - 顶部搜索栏（先把样子做出来，功能后说）
+    // MARK: - 顶部：关键字搜索（标题 + 正文）
 
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索笔记", text: $search)
+            TextField("搜索标题或正文", text: $filter.keyword)
                 .textFieldStyle(.plain)
+            if !filter.keyword.isEmpty {
+                Button { filter.keyword = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.12)))
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+    }
+
+    // MARK: - 筛选：标签 / 案主 / 术数（每类可多选；所有条件同时满足）
+
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            FilterPicker(title: "标签", items: allLabels, selection: $filter.labels, name: \.name, searchable: true)
+            FilterPicker(title: "案主", items: allSubjects, selection: $filter.subjects, name: \.name, searchable: true)
+            FilterPicker(title: "术数", items: allShushu, selection: $filter.shushu, name: \.name, searchable: false)
+            Spacer(minLength: 0)
+            if !filter.isEmpty {
+                Button("清除筛选") { filter = NoteFilter() }
+                    .buttonStyle(.plain)
+                    .font(.callout)
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
     // MARK: - 笔记列表
@@ -64,32 +101,235 @@ struct NotesWindowView: View {
         Group {
             if notes.isEmpty {
                 VStack(spacing: 6) {
-                    Text("还没有笔记").foregroundStyle(.secondary)
-                    Text("点右下角的笔新建").font(.caption).foregroundStyle(.secondary)
+                    if filter.isEmpty {
+                        Text("还没有笔记").foregroundStyle(.secondary)
+                        Text("点下面的笔新建").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("没有符合条件的笔记").foregroundStyle(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                GeometryReader { geo in
-                    List(notes) { note in
-                        NoteRow(note: note,
-                                maxTextWidth: geo.size.width * 0.75,   // 标题/预览最多占 3/4 宽
-                                windowWidth: geo.size.width)           // 时间按窗宽决定全显/省略
-                            .contentShape(Rectangle())
-                            .onTapGesture { editTarget = .edit(note.id) }
-                    }
-                    .listStyle(.inset)
-                    .scrollContentBackground(.hidden)   // 透出背景纹理
-                }
+                NoteList(notes: notes) { path.append(.editor(.edit($0))) }
             }
         }
     }
 
-    private func reload() { notes = client.noteList() }
+    // MARK: - 底部菜单栏：笔 = 新建笔记，人 = 案主（同主窗口的胶囊样式）
+
+    private var bottomBar: some View {
+        HStack(spacing: 6) {
+            barButton(help: "新建笔记") { path.append(.editor(.new)) } icon: {
+                PenIcon(color: .secondary, lineWidth: 1.8)
+            }
+            barButton(help: "案主") { path.append(.subjects) } icon: {
+                PersonIcon(color: .secondary, lineWidth: 1.8)
+            }
+        }
+        .padding(5)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .overlay(Capsule().stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)   // 整条胶囊水平居中
+    }
+
+    private func barButton<I: View>(help: String, action: @escaping () -> Void,
+                                    @ViewBuilder icon: () -> I) -> some View {
+        Button(action: action) {
+            icon()
+                .frame(width: 26, height: 26)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 26)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    // MARK: - 数据
+
+    private func reload() {
+        allLabels = client.labelList()
+        allSubjects = client.subjectList()
+        allShushu = client.shushuList()
+        // 选中的标签 / 案主已经被删了（或改了名）→ 跟着更新，避免拿旧条件去搜
+        filter.labels = filter.labels.compactMap { l in allLabels.first { $0.id == l.id } }
+        filter.subjects = filter.subjects.compactMap { s in allSubjects.first { $0.id == s.id } }
+        reloadNotes()
+    }
+
+    private func reloadNotes() { notes = client.noteList(filter) }
+}
+
+/// 筛选胶囊（可多选，同一类选多个 = 都要满足）：没选时显示「标签 ▾」；选了一个显示它的名字，
+/// 选了多个显示「疾病 等2个」（强调色）。名字最多显示 10 个字，太长用省略号。
+///
+/// 点胶囊弹出小浮窗（不用 Menu：Menu 点一项就会收起，没法连续多选）。浮窗点别处才关。
+/// - searchable（标签、案主）：顶部搜索框（英文不分大小写）；已选的高亮排在最上面，右边 × 取消；
+///   没选的按原来的顺序排在下面，点一下选上。取消后自然回到原来的位置（未选列表永远按原顺序）。
+/// - 不 searchable（术数）：固定顺序的清单，点一下勾上 / 取消。
+private struct FilterPicker<Item: Identifiable & Equatable>: View {
+    let title: String
+    let items: [Item]
+    @Binding var selection: [Item]
+    let name: KeyPath<Item, String>
+    let searchable: Bool
+
+    @State private var show = false
+    @State private var query = ""
+
+    private var labelText: String {
+        switch selection.count {
+        case 0: return title
+        case 1: return shortName(selection[0][keyPath: name])
+        default: return "\(shortName(selection[0][keyPath: name])) 等\(selection.count)个"
+        }
+    }
+
+    var body: some View {
+        Button { show = true } label: {
+            HStack(spacing: 4) {
+                Text(labelText).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(Capsule().fill(selection.isEmpty ? Color.gray.opacity(0.12) : Color.accentColor.opacity(0.15)))
+            .foregroundStyle(selection.isEmpty ? Color.secondary : Color.accentColor)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(selection.map { $0[keyPath: name] }.joined(separator: "、"))   // 悬停看全部已选（全名）
+        .popover(isPresented: $show, arrowEdge: .bottom) {
+            popoverContent
+                // ⚠️ macOS 的 popover 只在弹出那一刻定一次大小，所以用固定大小，列表在里面滚动
+                .frame(width: 240, height: searchable ? 300 : 360)
+        }
+        .onChange(of: show) { _, now in if !now { query = "" } }
+    }
+
+    private var popoverContent: some View {
+        VStack(spacing: 0) {
+            if searchable {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("搜索\(title)", text: $query).textFieldStyle(.plain)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.12)))
+                .padding(10)
+                Divider()
+            }
+            ScrollView {
+                // 不用 LazyVStack + 同一个 id：同一个标签从「没选」挪到「已选」时，SwiftUI 会按 id 认成同一行、
+                // 沿用旧的样子（没有高亮和 ×）。所以两段分别加前缀 id，让它们是不同的行。
+                VStack(alignment: .leading, spacing: 2) {
+                    if searchable {
+                        ForEach(selection) { item in selectedRow(item).id("selected-\(item.id)") }   // 已选：高亮在最上面
+                        if !selection.isEmpty && !unselectedMatches.isEmpty { Divider().padding(.vertical, 4) }
+                        ForEach(unselectedMatches) { item in plainRow(item).id("unselected-\(item.id)") }  // 没选的：原顺序
+                        if unselectedMatches.isEmpty && selection.isEmpty {
+                            Text(items.isEmpty ? "还没有\(title)" : "没有符合的\(title)")
+                                .font(.callout).foregroundStyle(.secondary).padding(10)
+                        }
+                    } else {
+                        ForEach(items) { item in checkRow(item) }               // 术数：固定顺序，打勾
+                    }
+                }
+                .padding(6)
+            }
+            .scrollIndicators(.visible)
+        }
+    }
+
+    /// 没选的、并且匹配搜索词的（按 items 原来的顺序）。
+    private var unselectedMatches: [Item] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return items.filter { item in
+            !isSelected(item) && (q.isEmpty || item[keyPath: name].localizedCaseInsensitiveContains(q))
+        }
+    }
+
+    private func isSelected(_ item: Item) -> Bool { selection.contains { $0.id == item.id } }
+
+    /// 选上一项；已经选过就不再加（防止界面还没刷新时连点，同一项被加好几次）。
+    private func select(_ item: Item) {
+        guard !isSelected(item) else { return }
+        selection.append(item)
+    }
+
+    private func selectedRow(_ item: Item) -> some View {
+        HStack(spacing: 6) {
+            Text(shortName(item[keyPath: name])).lineLimit(1)
+            Spacer(minLength: 4)
+            Button { selection.removeAll { $0.id == item.id } } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Color.accentColor.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+            .help("取消")
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.15)))
+        .foregroundStyle(Color.accentColor)
+        .help(item[keyPath: name])
+    }
+
+    private func plainRow(_ item: Item) -> some View {
+        Text(shortName(item[keyPath: name]))
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .onTapGesture { select(item) }
+            .help(item[keyPath: name])
+    }
+
+    private func checkRow(_ item: Item) -> some View {
+        let on = isSelected(item)
+        return HStack(spacing: 6) {
+            Text(item[keyPath: name])
+            Spacer(minLength: 4)
+            if on { Image(systemName: "checkmark") }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.accentColor.opacity(0.15) : Color.clear))
+        .foregroundStyle(on ? Color.accentColor : Color.primary)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isSelected(item) { selection.removeAll { $0.id == item.id } } else { select(item) }
+        }
+    }
+
+    /// 名字最多 10 个字，超出用省略号。
+    private func shortName(_ s: String) -> String {
+        s.count > 10 ? String(s.prefix(10)) + "…" : s
+    }
+}
+
+/// 笔记列表（主列表和案主页共用）：点一条 → onOpen(笔记 id)。
+struct NoteList: View {
+    let notes: [Note]
+    var onOpen: (Int) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            List(notes) { note in
+                NoteRow(note: note,
+                        maxTextWidth: geo.size.width * 0.75,   // 标题/预览最多占 3/4 宽
+                        windowWidth: geo.size.width)           // 时间按窗宽决定全显/省略
+                    .contentShape(Rectangle())
+                    .onTapGesture { onOpen(note.id) }
+            }
+            .listStyle(.inset)
+            .scrollContentBackground(.hidden)   // 透出背景纹理
+        }
+    }
 }
 
 /// 列表里的一条笔记。
 /// 左：案主胶囊(可多个) + 标题，下方正文预览；右上：label（算什么事，预留）；右下：创建/修改时间（自适应）。
-private struct NoteRow: View {
+struct NoteRow: View {
     let note: Note
     let maxTextWidth: CGFloat        // 标题/预览的最大显示宽度（= 窗宽 3/4，拉长则显示更多）
     let windowWidth: CGFloat         // 当前窗宽，用来决定时间显全还是省略
@@ -107,7 +347,8 @@ private struct NoteRow: View {
                 if let subs = note.subjects, !subs.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(subs) { s in
-                            Text(s.name)
+                            Text(s.name.count > 10 ? String(s.name.prefix(10)) + "…" : s.name)   // 最多 10 个字
+                                .help(s.name)
                                 .font(.title2)
                                 .foregroundStyle(.primary)          // 黑色
                                 .padding(.horizontal, 8).padding(.vertical, 3)
@@ -134,6 +375,9 @@ private struct NoteRow: View {
                 if let labels = note.labels, !labels.isEmpty {
                     LabelChipsLine(labels: labels)
                 }
+                if let shushu = note.shushu, !shushu.isEmpty {
+                    ShushuChipsLine(shushu: shushu)               // 用了哪些术数（标签下面）
+                }
                 Spacer(minLength: 2)
                 stampLine("创建", note.createdAt)
                 stampLine("改", note.updatedAt)
@@ -153,6 +397,48 @@ private struct NoteRow: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+    }
+}
+
+/// 预览右侧的术数：最多 3 个（按术数清单的顺序），每个按色系上色；悬停看全部。
+struct ShushuChipsLine: View {
+    let shushu: [Shushu]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(shushu.prefix(3)) { s in ShushuChip(shushu: s) }
+            if shushu.count > 3 {
+                Text("…").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .help(shushu.map(\.name).joined(separator: "、"))
+    }
+}
+
+/// 一个术数胶囊：实心底色 + 白字。颜色都调得柔和（参考五行颜色），一排看下来不刺眼。
+struct ShushuChip: View {
+    let shushu: Shushu
+
+    var body: some View {
+        Text(shushu.name)
+            .font(.caption2).fontWeight(.medium)
+            .lineLimit(1)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(Self.color(shushu.tone)))
+            .foregroundStyle(.white)
+    }
+
+    /// 色系 → 底色（白字都看得清：和白色的对比度都在 4 左右以上）。
+    static func color(_ tone: String?) -> Color {
+        switch tone {
+        case "yi":    return Color(hex: 0x33363A)   // 易学（易经、六爻、梅花…）：深灰黑，同五行「水」
+        case "ren":   return Color(hex: 0x4A6A8C)   // 六壬类（大六壬、小六壬、金口诀）：灰蓝
+        case "qimen": return Color(hex: 0x3F7F7A)   // 奇门遁甲：青（偏蓝的绿）
+        case "red":   return Color(hex: 0xB45A50)   // 八字、太乙神数：砖红，同五行「火」
+        case "ziwei": return Color(hex: 0x75608F)   // 紫微斗数：灰紫
+        case "earth": return Color(hex: 0x9C7C33)   // 风水：土黄（比五行「土」深一档，白字才看得清）
+        default:      return Color(hex: 0x7D7870)   // 随笔等：暖灰
+        }
     }
 }
 

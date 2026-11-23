@@ -7,6 +7,44 @@ struct Subject: Codable, Identifiable, Hashable {
     let id: Int
     let name: String
     var remark: String?
+    var noteCount: Int? = nil   // 只有 subject_list 返回：关联了多少笔记
+}
+
+/// 案主详情（subject_get）：案主本身 + 和他关联的所有笔记。
+/// 生日 "YYYY-MM-DD"、时间 "HH:MM"、性别 1 男 / 0 女，没填都是 nil。
+struct SubjectDetail: Codable {
+    let id: Int
+    let name: String
+    let remark: String
+    var birthday: String?
+    var birthtime: String?
+    var gender: Int?
+    let notes: [Note]
+}
+
+/// 术数（笔记用了哪些术数）：code 存数据库，name 显示。能插排盘的术数 code 同排盘类型。
+struct Shushu: Codable, Identifiable, Hashable {
+    let code: String
+    let name: String
+    var tone: String? = nil     // 色系（后端给）：yi / ren / qimen / red / ziwei / earth / plain，见 ShushuChip
+    var id: String { code }
+}
+
+/// shushu_list 的外层：{ "shushu": [...] }（note_shushu_add/remove 也返回这个格式）。
+struct ShushuListResult: Codable {
+    let shushu: [Shushu]
+}
+
+/// 笔记列表的筛选条件（都可省）。所有条件同时满足才出现——同一类选了多个（如两个标签），也要都有。
+struct NoteFilter: Equatable {
+    var keyword = ""
+    var labels: [NoteLabel] = []
+    var subjects: [Subject] = []
+    var shushu: [Shushu] = []
+
+    var isEmpty: Bool {
+        keyword.trimmingCharacters(in: .whitespaces).isEmpty && labels.isEmpty && subjects.isEmpty && shushu.isEmpty
+    }
 }
 
 /// 一条笔记。
@@ -21,6 +59,7 @@ struct Note: Codable, Identifiable {
     let updatedAt: String
     var subjects: [Subject]?
     var labels: [NoteLabel]?     // 列表右上角显示
+    var shushu: [Shushu]?        // 用了哪些术数
 }
 
 /// 标签（「算什么事」，如疾病、感情）：笔记和排盘共用一份清单，名字唯一。

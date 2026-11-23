@@ -97,6 +97,14 @@ struct DivinationClient {
                      "hour": hour, "minute": minute]))
     }
 
+    /// 农历 → 公历（农历选时间用：换成公历再排盘）。古代日期按历史公历（1582 年以前儒略历）。
+    func lunarToSolar(year: Int, month: Int, day: Int, isLeap: Bool, hour: Int, minute: Int) -> DateParts? {
+        struct R: Codable { let year, month, day, hour, minute: Int }
+        let r: R? = decode(send(["cmd": "lunar_to_solar", "year": year, "month": month, "day": day,
+                                 "is_leap": isLeap, "hour": hour, "minute": minute]))
+        return r.map { DateParts(year: $0.year, month: $0.month, day: $0.day, hour: $0.hour, minute: $0.minute) }
+    }
+
     /// 某农历年的月份结构（含闰月、每月天数）。
     func lunarMonths(year: Int) -> [LunarMonth]? {
         let r: LunarMonthsResult? = decode(send(["cmd": "lunar_months", "year": year]))
@@ -114,9 +122,63 @@ struct DivinationClient {
     }
 
     /// 所有笔记（按更新时间倒序，含正文预览）。
-    func noteList() -> [Note] {
-        let r: NoteListResult? = decode(send(["cmd": "note_list"]))
+    func noteList(_ filter: NoteFilter = NoteFilter()) -> [Note] {
+        let req: [String: Any] = ["cmd": "note_list", "keyword": filter.keyword,
+                                  "label_ids": filter.labels.map(\.id),
+                                  "subject_ids": filter.subjects.map(\.id),
+                                  "shushu": filter.shushu.map(\.code)]
+        let r: NoteListResult? = decode(send(req))
         return r?.notes ?? []
+    }
+
+    /// 全部标签（搜索筛选的下拉菜单用），常用的在前。
+    func labelList() -> [NoteLabel] {
+        let r: LabelSearchResult? = decode(send(["cmd": "label_list"]))
+        return r?.labels ?? []
+    }
+
+    /// 术数清单（按显示顺序）。
+    func shushuList() -> [Shushu] {
+        let r: ShushuListResult? = decode(send(["cmd": "shushu_list"]))
+        return r?.shushu ?? []
+    }
+
+    @discardableResult
+    func noteShushuAdd(noteId: Int, code: String) -> [Shushu]? {
+        let r: ShushuListResult? = decode(send(["cmd": "note_shushu_add", "note_id": noteId, "code": code]))
+        return r?.shushu
+    }
+
+    @discardableResult
+    func noteShushuRemove(noteId: Int, code: String) -> [Shushu]? {
+        let r: ShushuListResult? = decode(send(["cmd": "note_shushu_remove", "note_id": noteId, "code": code]))
+        return r?.shushu
+    }
+
+    /// 全部案主（最近改过的在前），带关联笔记数。
+    func subjectList() -> [Subject] {
+        let r: SubjectSearchResult? = decode(send(["cmd": "subject_list"]))
+        return r?.subjects ?? []
+    }
+
+    func subjectGet(id: Int) -> SubjectDetail? {
+        decode(send(["cmd": "subject_get", "subject_id": id]))
+    }
+
+    /// 改案主。生日 / 时间 / 性别传 nil = 没填（会把原来的清掉，所以每次都要把全部字段发过去）。
+    func subjectUpdate(id: Int, name: String, remark: String,
+                       birthday: String?, birthtime: String?, gender: Int?) -> SubjectDetail? {
+        var req: [String: Any] = ["cmd": "subject_update", "subject_id": id, "name": name, "remark": remark]
+        if let birthday { req["birthday"] = birthday }
+        if let birthtime { req["birthtime"] = birthtime }
+        if let gender { req["gender"] = gender }
+        return decode(send(req))
+    }
+
+    @discardableResult
+    func subjectDelete(id: Int) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "subject_delete", "subject_id": id]))
+        return r?.ok == true
     }
 
     func noteGet(id: Int) -> Note? {

@@ -1,7 +1,9 @@
-import calendar
-from datetime import datetime, timedelta
+from datetime import timedelta
+
+from lunar_python import Solar
 
 from divination.ganzhi.model import DiZhi, GanZhi, TianGan, YinYang
+from divination.ganzhi.repository import days_in_month
 
 # (五行关系 delta, 是否同阴阳) → 十神名
 # delta = (对方五行 − 日主五行) % 5：0 同我 / 1 我生 / 2 我克 / 3 克我 / 4 生我
@@ -57,16 +59,19 @@ def qiyun_age(delta: timedelta) -> tuple[int, int, int]:
     months, days_out = divmod(rem_units, 30)
     return years, months, days_out
 
-def add_ymd(dt: datetime, years: int, months: int, days: int) -> datetime:
+def add_ymd(s: Solar, years: int, months: int, days: int) -> Solar:
     """在日期上加「年、月、日」：先把年月累加进位、按月末钳日，最后加天。
-    用于「出生时刻 + 起运岁月日 = 交运时刻」。
-    给日期加上年月日时，用在比如起运时刻或者第 X 步大运的交接时刻
+    用于「出生时刻 + 起运岁月日 = 交运时刻」、第 X 步大运的交接时刻。
+    用 Solar（历史公历：1582 年以前是儒略历），所以古代日期的月长、闰年都按当时的历法算。
     """
-    total = (dt.year * 12 + dt.month - 1) + years * 12 + months  # 换算成「总月数」再进位
+    total = (s.getYear() * 12 + s.getMonth() - 1) + years * 12 + months  # 换算成「总月数」再进位
     year, month = divmod(total, 12)
     month += 1                                                   # 月份从 1 开始
-    day = min(dt.day, calendar.monthrange(year, month)[1])       # 防止 1/31 + 1月 落到不存在的 2/31
-    return dt.replace(year=year, month=month, day=day) + timedelta(days=days)
+    day = min(s.getDay(), days_in_month(year, month))            # 防止 1/31 + 1月 落到不存在的 2/31
+    if (year, month) == (1582, 10) and 5 <= day <= 14:           # 历史上不存在的 10 天 → 落到 15 日
+        day = 15
+    base = Solar.fromYmdHms(year, month, day, s.getHour(), s.getMinute(), s.getSecond())
+    return base.next(days) if days else base
 
 def liunian_ganzhi(year: int) -> GanZhi:
     """某公历年的干支(立春后)。公元 4 年为甲子，故 (年 - 4) % 60。"""

@@ -1,15 +1,11 @@
 import SwiftUI
 
 /// 梅花易数（时间起卦）页。不用 store：本地 @State 即可——每次从菜单进来都是全新实例，自动回到选时间页。
-/// 选时间：日期(年/月/日)、时间(时/分) 用跨平台滚轮 WheelPicker 滚动选择。
+/// 选时间：公历或农历；日期(年/月/日)、时间(时/分) 用跨平台滚轮 WheelPicker 滚动选择（年份也可输入）。
+/// 农历先请后端换成公历，再走原来的命令。
 /// 排盘：meihua 定本卦/动爻/变卦，bazi_pillars（bazi 包）给左上角八字/公历/农历，lookup 取两卦完整数据，yilin 取崔氏易林，cangua 取参卦。
 struct TimeDivinationView: View {
-    // 用分量存储，方便接滚轮
-    @State private var year: Int
-    @State private var month: Int
-    @State private var day: Int
-    @State private var hour: Int
-    @State private var minute: Int
+    @State private var date = DateInputModel(years: 1950...2060, initial: .now())
 
     @State private var result: PaipanResult?
     @State private var errorMessage: String?
@@ -19,27 +15,11 @@ struct TimeDivinationView: View {
     private let client = DivinationClient()
     @AppStorage("wuxingColorOn") private var wuxingColorOn = false   // 五行颜色（和易经速查共用）
 
-    private var dateString: String { String(format: "%04d-%02d-%02d", year, month, day) }
-    private var timeString: String { String(format: "%02d:%02d", hour, minute) }
-
-    init() {
-        let c = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
-        _year   = State(initialValue: c.year   ?? 2026)
-        _month  = State(initialValue: c.month  ?? 1)
-        _day    = State(initialValue: c.day    ?? 1)
-        _hour   = State(initialValue: c.hour   ?? 0)
-        _minute = State(initialValue: c.minute ?? 0)
+    private var dateString: String {
+        date.isLunar ? date.dateLabel
+                     : String(format: "%04d-%02d-%02d", date.solar.year, date.solar.month, date.solar.day)
     }
-
-    /// 当前年月对应的天数(28~31)，让"日"滚轮不出现无效日期。
-    private var dayRange: [Int] {
-        let cal = Calendar.current
-        if let d = cal.date(from: DateComponents(year: year, month: month)),
-           let r = cal.range(of: .day, in: .month, for: d) {
-            return Array(r)
-        }
-        return Array(1...31)
-    }
+    private var timeString: String { String(format: "%02d:%02d", date.solar.hour, date.solar.minute) }
 
     var body: some View {
         if let r = result {
@@ -55,6 +35,8 @@ struct TimeDivinationView: View {
         VStack(spacing: 24) {
             Text("梅花易数").font(.largeTitle).bold()
 
+            CalendarModeSwitch(model: date)                 // 公历 / 农历
+
             // 两行：日期 / 时间，显示当前值；点击弹出对应的滚轮浮窗。
             VStack(spacing: 0) {
                 // 日期行
@@ -67,11 +49,8 @@ struct TimeDivinationView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { showDatePicker = true }
                 .popover(isPresented: $showDatePicker) {
-                    HStack(spacing: 10) {
-                        WheelPicker(title: "年", values: Array(1950...2060), selection: $year).frame(width: 96)
-                        WheelPicker(title: "月", values: Array(1...12), selection: $month).frame(width: 72)
-                        WheelPicker(title: "日", values: dayRange, selection: $day).frame(width: 72)
-                    }
+                    DateInputWheels(model: date, showTime: false, valueFont: .title3,
+                                    yearWidth: 96, columnWidth: 72)
                     .padding()
                     .presentationCompactAdaptation(.popover)   // iPhone 上也用浮窗而非整屏
                 }
@@ -88,10 +67,7 @@ struct TimeDivinationView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { showTimePicker = true }
                 .popover(isPresented: $showTimePicker) {
-                    HStack(spacing: 10) {
-                        WheelPicker(title: "时", values: Array(0...23), selection: $hour).frame(width: 72)
-                        WheelPicker(title: "分", values: Array(0...59), selection: $minute).frame(width: 72)
-                    }
+                    DateInputWheels(model: date, showDate: false, valueFont: .title3, columnWidth: 72)
                     .padding()
                     .presentationCompactAdaptation(.popover)
                 }
@@ -115,24 +91,22 @@ struct TimeDivinationView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)   // 居中填满，内容一屏可见
-        .onChange(of: month) { _, _ in clampDay() }
-        .onChange(of: year) { _, _ in clampDay() }
-    }
-
-    private func clampDay() {
-        if day > dayRange.count { day = dayRange.count }   // 换月后若日超出，收回
     }
 
     private func resetToNow() {
-        let c = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: Date())
-        year = c.year ?? year; month = c.month ?? month; day = c.day ?? day
-        hour = c.hour ?? hour; minute = c.minute ?? minute
+        let lunar = date.isLunar
+        date.setSolar(.now())
+        if lunar { date.setLunar(true) }               // 保持当前的公历 / 农历方式
         errorMessage = nil
     }
 
     // MARK: - 排盘
 
     private func paipan() {
+        guard let s = date.resolvedSolar() else {
+            errorMessage = "农历日期换算失败"; return
+        }
+        let (year, month, day, hour, minute) = (s.year, s.month, s.day, s.hour, s.minute)
         guard let m = client.meihua(year: year, month: month, day: day, hour: hour, minute: minute) else {
             errorMessage = "排盘失败：引擎无响应（检查 lunar_python 是否已打包）"; return
         }
