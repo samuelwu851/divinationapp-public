@@ -596,7 +596,9 @@ struct ChartSearchPanel: View {
     }
 }
 
-/// 填整数的条件（如年份：选项太多放不进下拉框）。空着 = 不限；回车或点别处生效，超出范围收到边界。
+/// 填整数的条件（如年份：选项太多放不进下拉框）。空着 = 不限。
+/// 一边输入一边搜（输到 202 没结果，输完 2027 就出来，删空 = 不限），不用按回车；
+/// 回车或点别处时再把超出范围的数收到边界。
 private struct NumberCondition: View {
     let field: ChartSearchForm.Field
     @Binding var value: String?
@@ -616,6 +618,7 @@ private struct NumberCondition: View {
                 .focused($focused)
                 .onSubmit(commit)
                 .onChange(of: focused) { _, now in if !now { commit() } }
+                .onChange(of: text) { _, t in value = Self.parse(t).map(String.init) }   // 边输边搜
                 .help(rangeHelp)
         }
         .onAppear { text = value ?? "" }
@@ -628,8 +631,13 @@ private struct NumberCondition: View {
         }
     }
 
+    /// 输入框里的字 → 整数；空着或填的不是数字 → nil（不限）。
+    private static func parse(_ t: String) -> Int? {
+        Int(t.filter { $0.isNumber || $0 == "-" })
+    }
+
     private func commit() {
-        guard let n = Int(text.filter { $0.isNumber || $0 == "-" }) else {
+        guard let n = Self.parse(text) else {
             value = nil; text = ""; return                       // 空着或填错 = 不限
         }
         var v = n
@@ -650,13 +658,21 @@ private struct BlockCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(form.title).font(.subheadline).bold()
             ForEach(form.fields.filter(\.isChecks)) { field in checks(field) }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: max(1, form.columns)),
-                      alignment: .leading, spacing: 8) {
-                ForEach(form.fields.filter { !$0.isChecks }) { field in
-                    if field.isNumber {
-                        NumberCondition(field: field, value: $block.fields[field.key])
-                    } else {
-                        menu(field)
+            // 下拉 / 填数字的字段：按 group 分成几组，每组一张网格，组上面一个小标题（没分组就是一整张网格）
+            ForEach(Array(groups.enumerated()), id: \.offset) { _, g in
+                VStack(alignment: .leading, spacing: 4) {
+                    if let title = g.title {
+                        Text(title).font(.caption).bold().foregroundStyle(.secondary)
+                    }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: max(1, form.columns)),
+                              alignment: .leading, spacing: 8) {
+                        ForEach(g.fields) { field in
+                            if field.isNumber {
+                                NumberCondition(field: field, value: $block.fields[field.key])
+                            } else {
+                                menu(field)
+                            }
+                        }
                     }
                 }
             }
@@ -673,6 +689,19 @@ private struct BlockCard: View {
             .help("去掉这个条件")
             .padding(6)
         }
+    }
+
+    /// 非勾选的字段按 group 分组（相邻的同组字段放一起，保持表单里的顺序）。
+    private var groups: [(title: String?, fields: [ChartSearchForm.Field])] {
+        var out: [(title: String?, fields: [ChartSearchForm.Field])] = []
+        for f in form.fields where !f.isChecks {
+            if let last = out.last, last.title == f.group {
+                out[out.count - 1].fields.append(f)
+            } else {
+                out.append((f.group, [f]))
+            }
+        }
+        return out
     }
 
     /// 互斥勾选框：勾一个 = 只要这种；再点一次取消 = 不限。

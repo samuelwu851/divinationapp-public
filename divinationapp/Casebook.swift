@@ -67,6 +67,7 @@ struct ChartSearchForm: Codable, Identifiable {
         let options: [Option]
         var min: Int? = nil               // number 字段的范围（可没有）
         var max: Int? = nil
+        var group: String? = nil          // 分组小标题（如「公历」「农历」）：相邻的同组字段排在一起，组上面显示小标题
         var id: String { key }
         var isChecks: Bool { style == "checks" }
         var isNumber: Bool { style == "number" }
