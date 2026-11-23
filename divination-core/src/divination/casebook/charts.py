@@ -5,6 +5,17 @@
 - 存下来的快照就是当时的结果，以后算法改了，老笔记里的盘也不会变。
 
 每种术数一个 builder：参数 dict → (标题, 快照 dict)。
+
+插件也可以加自己的排盘类型：在插件模块里导出 CHART_BUILDERS = {"类型": builder}，
+api 扫描插件时会调 register_builders 合并进来（同 COMMANDS 的做法），这里不用改。
+
+通用卡片：前端只内置了 bazi / iching / meihua 三种卡片的画法。其他类型（如插件）
+在快照里带一段 "card"，前端照着画，不用为每种新类型改编辑器：
+    "card": {
+        "title": "卡片抬头（术数名）",
+        "subtitle": "副标题（如日期，可省）",
+        "guas": [{"label": "卦下的小字", "name": "卦名", "lines": [初…上], "trigrams": {...}（可省）}, ...]
+    }
 """
 from datetime import datetime
 
@@ -63,6 +74,14 @@ BUILDERS = {
     "iching": _iching,
     "meihua": _meihua,
 }
+
+
+def register_builders(builders: dict) -> None:
+    """插件注册自己的排盘类型。不许覆盖已有的类型（避免插件悄悄改掉内置排盘）。"""
+    for chart_type, builder in builders.items():
+        if chart_type in BUILDERS:
+            raise ValueError(f"排盘类型重复注册：{chart_type}")
+        BUILDERS[chart_type] = builder
 
 
 def build(chart_type: str, params: dict) -> tuple[str, dict]:

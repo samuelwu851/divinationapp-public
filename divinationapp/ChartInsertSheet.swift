@@ -1,12 +1,15 @@
 import SwiftUI
 
-/// 笔记里「插入排盘」的面板：先选术数（八字 / 易经速查 / 梅花易数），再填参数。
+/// 笔记里「插入排盘」的面板：先选术数（八字 / 易经速查 / 梅花易数，以及注册进来的其他类型），再填参数。
 /// 排盘由后端 chart_create 完成并存进这份笔记，拿回 id 后交给编辑器插入卡片。
 struct ChartInsertSheet: View {
-    enum Kind: String, CaseIterable {
-        case bazi = "八字"
-        case iching = "易经速查"
-        case meihua = "梅花易数"
+    /// 分段控件的一项：内置三种，或注册表里的类型（tag 用后端排盘类型名）。
+    private struct Tab: Hashable { let type: String; let title: String }
+    private static let builtinTabs = [Tab(type: "bazi", title: "八字"),
+                                      Tab(type: "iching", title: "易经速查"),
+                                      Tab(type: "meihua", title: "梅花易数")]
+    private var tabs: [Tab] {
+        Self.builtinTabs + ChartKindRegistry.kinds.map { Tab(type: $0.type, title: $0.title) }
     }
 
     let client: DivinationClient
@@ -15,7 +18,7 @@ struct ChartInsertSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var kind: Kind = .bazi
+    @State private var kind = "bazi"
     @State private var errorMessage: String?
 
     // 八字
@@ -30,21 +33,29 @@ struct ChartInsertSheet: View {
     // 梅花易数（时间起卦）
     @State private var moment: DateParts = .now()
 
+    // 注册表里的类型：表单交出来的参数
+    @State private var pluginParams: [String: Any]?
+
     var body: some View {
         VStack(spacing: 20) {
             Picker("", selection: $kind) {
-                ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                ForEach(tabs, id: \.self) { Text($0.title).tag($0.type) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 360)
+            .frame(maxWidth: 120 * CGFloat(tabs.count))
 
             ScrollView {
                 Group {
                     switch kind {
-                    case .bazi: baziForm
-                    case .iching: ichingForm
-                    case .meihua: meihuaForm
+                    case "bazi": baziForm
+                    case "iching": ichingForm
+                    case "meihua": meihuaForm
+                    default:
+                        if let k = ChartKindRegistry.kind(for: kind) {
+                            k.makeInsertForm { pluginParams = $0 }
+                                .id(k.type)              // 换类型时表单重建，状态归零
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -75,7 +86,7 @@ struct ChartInsertSheet: View {
                 changed = original
             }
         }
-        .onChange(of: kind) { _, _ in errorMessage = nil }
+        .onChange(of: kind) { _, _ in errorMessage = nil; pluginParams = nil }
     }
 
     // MARK: - 八字（同八字排盘页：姓名 + 性别 + 公历滚轮）
@@ -147,17 +158,20 @@ struct ChartInsertSheet: View {
     private func insert() {
         let id: Int?
         switch kind {
-        case .bazi:
+        case "bazi":
             var p = birth.params
             p["name"] = name.trimmingCharacters(in: .whitespaces)
             p["is_male"] = isMale
             id = client.chartCreate(noteId: noteId, type: "bazi", params: p)
-        case .iching:
+        case "iching":
             guard let org = original, let chg = changed else { return }
             id = client.chartCreate(noteId: noteId, type: "iching",
                                     params: ["org_value": org.value, "chg_value": chg.value])
-        case .meihua:
+        case "meihua":
             id = client.chartCreate(noteId: noteId, type: "meihua", params: moment.params)
+        default:
+            guard let p = pluginParams else { errorMessage = "请先把参数填完整"; return }
+            id = client.chartCreate(noteId: noteId, type: kind, params: p)
         }
         guard let id else { errorMessage = "排盘失败：引擎无响应"; return }
         onInserted(id)

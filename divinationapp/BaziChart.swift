@@ -26,6 +26,16 @@ struct BaziPillars: Codable {
     let hour: BaziPillar
 }
 
+/// 只排四柱的结果（对应后端 bazi 包的 bazi_pillars / pillars()）：不含性别、大运。
+struct BaziPillarsResult: Codable {
+    let inputTime: String    // input_time 公历
+    let lunarTime: String    // lunar_time 农历中文
+    let pillars: BaziPillars // 每柱带干支、十神、藏干、纳音
+
+    /// 四柱干支 [年, 月, 日, 时]，给 BaziPillarsView 用。
+    var ganzhis: [String] { [pillars.year.ganzhi, pillars.month.ganzhi, pillars.day.ganzhi, pillars.hour.ganzhi] }
+}
+
 /// 起运（岁、月、日）。
 struct BaziQiyun: Codable {
     let years: Int

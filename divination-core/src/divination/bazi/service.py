@@ -138,8 +138,12 @@ def _chart_cmd(req: dict) -> str:
     birth = datetime(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
     return json.dumps(bazi_chart(birth, req["is_male"]), ensure_ascii=False)
 
+def _pillars_cmd(req: dict) -> str:
+    birth = datetime(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
+    return json.dumps(pillars(birth), ensure_ascii=False)
+
 def _liuyue_cmd(req: dict) -> str:
     birth = datetime(req["year"], req["month"], req["day"], req.get("hour", 0), req.get("minute", 0))
     return json.dumps(liuyue(birth, req["target_year"]), ensure_ascii=False)
 
-COMMANDS = {"bazi_chart": _chart_cmd, "liuyue": _liuyue_cmd}
+COMMANDS = {"bazi_chart": _chart_cmd, "bazi_pillars": _pillars_cmd, "liuyue": _liuyue_cmd}

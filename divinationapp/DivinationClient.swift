@@ -55,6 +55,12 @@ struct DivinationClient {
                      "day": day, "hour": hour, "minute": minute]))
     }
 
+    /// 只排四柱（bazi 包）。梅花易数页用；笔记里梅花快照的格式还是旧的 BaziResult。
+    func baziPillars(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> BaziPillarsResult? {
+        decode(send(["cmd": "bazi_pillars", "year": year, "month": month,
+                     "day": day, "hour": hour, "minute": minute]))
+    }
+
     func bazi(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> BaziResult? {
         decode(send(["cmd": "bazi", "year": year, "month": month,
                      "day": day, "hour": hour, "minute": minute]))

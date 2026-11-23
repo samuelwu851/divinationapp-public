@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 梅花易数（时间起卦）页。不用 store：本地 @State 即可——每次从菜单进来都是全新实例，自动回到选时间页。
 /// 选时间：日期(年/月/日)、时间(时/分) 用跨平台滚轮 WheelPicker 滚动选择。
-/// 排盘：meihua 定本卦/动爻/变卦，bazi 给左上角八字/公历/农历，lookup 取两卦完整数据，yilin 取崔氏易林，cangua 取参卦。
+/// 排盘：meihua 定本卦/动爻/变卦，bazi_pillars（bazi 包）给左上角八字/公历/农历，lookup 取两卦完整数据，yilin 取崔氏易林，cangua 取参卦。
 struct TimeDivinationView: View {
     // 用分量存储，方便接滚轮
     @State private var year: Int
@@ -141,7 +141,7 @@ struct TimeDivinationView: View {
             errorMessage = "排盘失败：取卦数据出错"; return
         }
         result = PaipanResult(
-            bazi: client.bazi(year: year, month: month, day: day, hour: hour, minute: minute),
+            bazi: client.baziPillars(year: year, month: month, day: day, hour: hour, minute: minute),
             original: ben,
             changed: bian,
             changingLines: [m.movingLine - 1],
@@ -178,12 +178,12 @@ struct TimeDivinationView: View {
     }
 
     /// 左上角：公历 + 农历 + 八字（四柱，按五行上色，字号同卦名）。
-    private func timeInfoPanel(_ b: BaziResult?) -> some View {
+    private func timeInfoPanel(_ b: BaziPillarsResult?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let b {
                 Text(b.inputTime).font(.body)
-                Text(b.lunar).font(.body)
-                BaziPillarsView(pillars: [b.year, b.month, b.day, b.hour])
+                Text(b.lunarTime).font(.body)
+                BaziPillarsView(pillars: b.ganzhis)
             } else {
                 Text("八字信息获取失败").foregroundStyle(.red)
             }
@@ -193,7 +193,7 @@ struct TimeDivinationView: View {
 
 /// 一次排盘的结果（梅花易数页本地持有，不入 store）。
 struct PaipanResult {
-    let bazi: BaziResult?
+    let bazi: BaziPillarsResult?
     let original: Hexagram
     let changed: Hexagram
     let changingLines: Set<Int>

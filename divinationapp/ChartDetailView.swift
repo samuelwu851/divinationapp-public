@@ -20,6 +20,7 @@ struct ChartDetailView: View {
         case bazi(BaziChart, name: String, birth: Birth)
         case iching(title: String, original: Hexagram, changed: Hexagram, yilin: String?, cangua: [CanGuaGroup]?)
         case meihua(bazi: BaziResult, original: Hexagram, changed: Hexagram, yilin: String?, cangua: [CanGuaGroup]?)
+        case registered(ChartKind, AnyView)          // 注册表里的类型（如插件），视图由它自己给
         case unsupported
         case missing
     }
@@ -80,6 +81,16 @@ struct ChartDetailView: View {
                 .padding(32)
             }
             .navigationTitle("梅花易数")
+        case .registered(let kind, let view):
+            ScrollView {
+                VStack(spacing: 18) {
+                    if kind.showsWuxingToggle { wuxingToggle }
+                    view
+                }
+                .padding(32)
+                .frame(maxWidth: .infinity)
+            }
+            .navigationTitle(kind.title)
         case .unsupported:
             message("这个版本还不支持显示这种排盘")
         case .missing:
@@ -151,7 +162,9 @@ struct ChartDetailView: View {
             return .meihua(bazi: s.snapshot.bazi, original: s.snapshot.original, changed: s.snapshot.changed,
                            yilin: s.snapshot.yilin, cangua: s.snapshot.cangua)
         default:
-            return .unsupported
+            guard let kind = ChartKindRegistry.kind(for: head.type),
+                  let view = kind.makeDetail(data) else { return .unsupported }
+            return .registered(kind, view)
         }
     }
 }

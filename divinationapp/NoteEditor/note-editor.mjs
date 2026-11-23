@@ -160,6 +160,15 @@ function guaPair(org, chg) {
   return pair
 }
 
+// 通用卡片：不是内置三种的排盘（如插件）在快照里带 card，照着画一排卦（格式见后端 casebook/charts.py）
+function guaRow(guas) {
+  const row = el('div', 'gua-row')
+  for (const g of guas || []) {
+    if (Array.isArray(g.lines)) row.append(guaBlock(g, g.label || ''))
+  }
+  return row
+}
+
 function head(...parts) {
   const h = el('div', 'cc-head')
   parts.filter(Boolean).forEach((p, i) => {
@@ -186,6 +195,9 @@ function renderCard(dom, chart) {
     body.push(head('易经速查', chart.title), guaPair(s.original, s.changed))
   } else if (chart.type === 'meihua') {
     body.push(head('梅花易数', chart.title, (s.bazi?.input_time || '').slice(0, 16)), guaPair(s.original, s.changed))
+  } else if (s.card) {
+    const c = s.card
+    body.push(head(c.title || '排盘', chart.title, c.subtitle), guaRow(c.guas))
   } else {
     body.push(head('排盘'), el('div', 'cc-missing', '这个版本还不支持显示这种排盘'))
   }
