@@ -78,10 +78,28 @@ def dayun(birth: datetime, is_male: bool, count: int = 11) -> dict:
         "steps": steps,
     }
 
-def bazi_chart(birth: datetime, is_male: bool) -> dict:
+def pillars(birth: datetime) -> dict:
+    """只排四柱（不需要性别）：公历/农历 + 年月日时四柱的干支、十神、藏干、纳音。
+
+    结构与 bazi_chart 里的同名字段一致；皇极经世等只要四柱的地方直接用它。
+    """
     sizhu = sizhu_of(birth)
-    # 日主
-    me = sizhu.day.gan
+    me = sizhu.day.gan                      # 日主
+    return {
+        "input_time": birth.strftime("%Y-%m-%d %H:%M"),
+        "lunar_time": lunar_info(birth)["lunar_date"],
+        "pillars": {
+            "year":  gz_detail(me, sizhu.year),
+            "month": gz_detail(me, sizhu.month),
+            "day":   gz_detail(me, sizhu.day, is_day=True),
+            "hour":  gz_detail(me, sizhu.hour),
+        },
+    }
+
+
+def bazi_chart(birth: datetime, is_male: bool) -> dict:
+    base = pillars(birth)
+    me = sizhu_of(birth).day.gan            # 日主
 
     dy = dayun(birth, is_male)
 
@@ -96,14 +114,7 @@ def bazi_chart(birth: datetime, is_male: bool) -> dict:
 
     res = {
         "gender": "乾造" if is_male else "坤造",
-        "input_time": birth.strftime("%Y-%m-%d %H:%M"),
-        "lunar_time": lunar_info(birth)["lunar_date"],
-        "pillars":{
-            "year":  gz_detail(me, sizhu.year),
-            "month": gz_detail(me, sizhu.month),
-            "day":   gz_detail(me, sizhu.day, is_day=True),
-            "hour":  gz_detail(me, sizhu.hour),
-        },
+        **base,
         "qiyun": dy["qiyun"],
         "start_solar": dy["start_solar"],
         "jiaoyun": dy["jiaoyun"],
