@@ -15,6 +15,7 @@ from divination.bazi import service as bazi_service
 from divination.casebook import service as casebook_service
 from divination.casebook import charts as casebook_charts
 from divination.casebook import shushu as casebook_shushu
+from divination.casebook import chart_facts as casebook_chart_facts
 from divination import plugins
 
 import importlib
@@ -30,6 +31,7 @@ for _info in pkgutil.iter_modules(plugins.__path__, plugins.__name__ + "."):
     _HANDLERS.update(_plugin.COMMANDS)
     casebook_charts.register_builders(getattr(_plugin, "CHART_BUILDERS", {}))   # 插件自己的排盘类型（可没有）
     casebook_shushu.register_many(getattr(_plugin, "SHUSHU", []))                # 插件自己的术数（可没有）
+    casebook_chart_facts.register_many(getattr(_plugin, "CHART_FACTS", {}))      # 插件自己的排盘搜索（可没有）
 
 def handle(request_json: str) -> str:
     try:

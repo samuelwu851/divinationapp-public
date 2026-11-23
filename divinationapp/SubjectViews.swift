@@ -160,7 +160,8 @@ struct SubjectDetailView: View {
                     Text("还没有关联的笔记").foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    NoteList(notes: notes) { open(.editor(.edit($0))) }
+                    NoteList(notes: notes, onOpen: { open(.editor(.edit($0))) },
+                             onTrash: { client.noteTrash(id: $0); load() })
                         .padding(.horizontal, -20)
                 }
             }

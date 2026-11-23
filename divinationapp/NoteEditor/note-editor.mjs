@@ -10,7 +10,8 @@
 //
 // 正文存的是 editor.getJSON()：
 //   排盘：{type: 'chart', attrs: {id}}
-//   图片：{type: 'image', attrs: {src: 'attachment:<文件名>', alt, width: '50%'}}
+//   图片：{type: 'image', attrs: {src: 'attachment:<文件名>', alt, width: '480px', align: 'left'|'center'|'right'}}
+//         （旧笔记的 width 是百分比，如 '50%'：显示时按 480 宽换成像素）
 //   颜色：{type: 'textColor', attrs: {c: 'red'}}（固定色板，只存颜色名）
 import {
   Editor, Node, Mark, StarterKit, Underline, Highlight, Image, Placeholder,
@@ -374,16 +375,36 @@ const ChartCard = Node.create({
   },
 })
 
-// ---------- 图片：只接受存进 App 的图片（attachment:），宽度存百分比 ----------
+// ---------- 图片：只接受存进 App 的图片（attachment:），宽度存像素 ----------
+// 以前存百分比：窗口一放大图片就跟着放大。现在存像素，窗口变宽图片不变；窗口比图窄时 CSS 让它缩到放得下。
+const IMG_REF_WIDTH = 480          // 旧笔记的百分比按这个宽度（默认窗口的正文宽）换成像素
+const IMG_MIN_WIDTH = 40
+
+/** attrs.width → 像素数（旧的 '50%' 按 IMG_REF_WIDTH 换算）；没有就 null。 */
+function widthPx(w) {
+  if (w == null || w === '') return null
+  const s = String(w)
+  const n = parseFloat(s)
+  if (!isFinite(n)) return null
+  return Math.round(s.endsWith('%') ? (n / 100) * IMG_REF_WIDTH : n)
+}
+
+let ctxImagePos = null             // 右键点中的那张图在文档里的位置（右键菜单的各项操作都对它）
+
 const ResizableImage = Image.extend({
   draggable: true,
   addAttributes() {
     return {
       ...this.parent?.(),
       width: {
-        default: '100%',
-        parseHTML: el => el.getAttribute('width') || '100%',
-        renderHTML: a => ({ width: a.width }),
+        default: null,
+        parseHTML: el => el.getAttribute('width'),
+        renderHTML: a => (a.width ? { width: a.width } : {}),
+      },
+      align: {
+        default: 'left',
+        parseHTML: el => el.getAttribute('data-align') || 'left',
+        renderHTML: a => ({ 'data-align': a.align }),
       },
     }
   },
@@ -395,14 +416,29 @@ const ResizableImage = Image.extend({
     return ({ node, getPos, editor }) => {
       const box = el('div', 'img-box')
       const img = document.createElement('img')
+      img.crossOrigin = 'anonymous'                   // 裁剪要把图画进 canvas：跨域加载（宿主给了 ACAO 头）才不会被「污染」
       const handle = el('span', 'handle')
       const size = el('span', 'size')
       box.append(img, handle, size)
       const apply = n => {
-        img.src = displaySrc(n.attrs.src)
+        const src = displaySrc(n.attrs.src)
+        if (img.getAttribute('src') !== src) img.src = src
         img.alt = n.attrs.alt || ''
-        box.style.width = n.attrs.width
+        box.style.width = (widthPx(n.attrs.width) ?? IMG_REF_WIDTH) + 'px'
+        box.dataset.align = n.attrs.align || 'left'
       }
+      // 不超过原图的像素宽度（小图不放大到发糊）
+      img.addEventListener('load', () => {
+        if (img.naturalWidth) box.style.maxWidth = `min(100%, ${img.naturalWidth}px)`
+      })
+      // 右键：记下是哪张图、选中它，告诉宿主（宿主据此换成图片专用的右键菜单）
+      box.addEventListener('contextmenu', () => {
+        const pos = getPos()
+        if (typeof pos !== 'number') return
+        ctxImagePos = pos
+        editor.commands.setNodeSelection(pos)
+        host.notify('imageContext', { src: node.attrs.src, align: node.attrs.align || 'left', alt: node.attrs.alt || '' })
+      })
       img.addEventListener('error', () => {
         box.classList.add('broken')
         box.textContent = '图片丢失：' + (node.attrs.alt || node.attrs.src)
@@ -414,19 +450,20 @@ const ResizableImage = Image.extend({
         e.stopPropagation()
         const startX = e.clientX
         const startW = box.getBoundingClientRect().width
-        const full = editor.view.dom.clientWidth
-        let pct = parseFloat(node.attrs.width) || 100
+        // 最宽：正文宽、原图像素宽，取小的
+        const maxW = Math.min(editor.view.dom.clientWidth, img.naturalWidth || Infinity)
+        let px = Math.round(startW)
         box.classList.add('resizing')
         const move = ev => {
-          pct = Math.round(Math.min(100, Math.max(10, ((startW + ev.clientX - startX) / full) * 100)))
-          box.style.width = pct + '%'
-          size.textContent = pct + '%'
+          px = Math.round(Math.min(maxW, Math.max(IMG_MIN_WIDTH, startW + ev.clientX - startX)))
+          box.style.width = px + 'px'
+          size.textContent = px + ' px'
         }
         const up = () => {
           window.removeEventListener('mousemove', move)
           window.removeEventListener('mouseup', up)
           box.classList.remove('resizing')
-          editor.view.dispatch(editor.view.state.tr.setNodeMarkup(getPos(), undefined, { ...node.attrs, width: pct + '%' }))
+          editor.view.dispatch(editor.view.state.tr.setNodeMarkup(getPos(), undefined, { ...node.attrs, width: px + 'px' }))
         }
         window.addEventListener('mousemove', move)
         window.addEventListener('mouseup', up)
@@ -439,7 +476,7 @@ const ResizableImage = Image.extend({
           apply(n)
           return true
         },
-        stopEvent: e => e.target === handle,
+        stopEvent: e => e.target === handle || !!e.target.closest?.('.crop-rect, .crop-bar'),   // 裁剪框里的操作不交给编辑器
         ignoreMutation: () => true,
       }
     }
@@ -476,7 +513,9 @@ async function uploadImages(files, pos) {
       const r = await host.call('attachment_add', {
         note_id: noteId, data, original_name: f.name || 'image.png', width, height,
       })
-      const node = editor.schema.nodes.image.create({ src: r.src, alt: f.name || '' })
+      // 插入时的宽度：原图像素宽，但不超过正文宽（以后窗口放大也不会跟着变大）
+      const fit = Math.min(width || IMG_REF_WIDTH, editor.view.dom.clientWidth || IMG_REF_WIDTH)
+      const node = editor.schema.nodes.image.create({ src: r.src, alt: f.name || '', width: Math.round(fit) + 'px' })
       const at = pos ?? editor.state.selection.from
       editor.view.dispatch(editor.state.tr.insert(Math.min(at, editor.state.doc.content.size), node))
       if (pos != null) pos += node.nodeSize
@@ -656,12 +695,140 @@ window.noteEditor = {
     document.body.classList.toggle('wx-on', !!on)
   },
 
+  /** 宿主在页面顶上盖的那一块（标题、案主、标签、术数）有多高：留出同样高的空白。 */
+  setTopInset(px) {
+    document.getElementById('top-inset').style.height = Math.max(0, px) + 'px'
+  },
+
+  /** 右键菜单：对齐（left / center / right）。 */
+  imageAlign(align) {
+    withContextImage((pos, n) => editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(pos, undefined, { ...n.attrs, align })))
+  },
+
+  /** 右键菜单「粘贴」：宿主已经把剪贴板的图存好了，换掉这张图（宽度、对齐不变）。 */
+  replaceContextImage(src, alt) {
+    withContextImage((pos, n) => editor.view.dispatch(
+      editor.state.tr.setNodeMarkup(pos, undefined, { ...n.attrs, src, alt: alt ?? n.attrs.alt })))
+  },
+
+  /** 右键菜单「裁剪」：在图上出现裁剪框。 */
+  cropContextImage() {
+    withContextImage(pos => {
+      const box = editor.view.nodeDOM(pos)
+      if (box) startCrop(box, pos)
+    })
+  },
+
   /** 标签在 Swift 那边被彻底删除了：卡片上也去掉。 */
   labelDeleted(id) {
     dropLabelEverywhere(id)
   },
 }
 
+/** 右键点中的那张图还在原位就执行 fn(pos, node)（期间文档被改过、图不在了就什么都不做）。 */
+function withContextImage(fn) {
+  if (!editor || ctxImagePos == null) return
+  const n = editor.state.doc.nodeAt(ctxImagePos)
+  if (n?.type.name === 'image') fn(ctxImagePos, n)
+}
+
+// ---------- 裁剪：图上一个可拖的框，框外压暗；「完成」把框里的部分存成新图片替换原图（⌘Z 可撤销） ----------
+function startCrop(box, pos) {
+  if (box.classList.contains('cropping')) return
+  const img = box.querySelector('img')
+  if (!img?.naturalWidth) { toast('图片还没加载好'); return }
+  box.classList.add('cropping')
+  let r = { x: 0, y: 0, w: 1, h: 1 }                 // 裁剪框，按图片宽高的比例（0–1）
+  const rect = el('div', 'crop-rect')
+  for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
+    const c = el('span', 'ch'); c.dataset.h = h; rect.append(c)
+  }
+  const bar = el('div', 'crop-bar')
+  const cancelBtn = el('button', null, '取消')
+  const okBtn = el('button', 'ok', '完成')
+  bar.append(cancelBtn, okBtn)
+  box.append(rect, bar)
+  const draw = () => Object.assign(rect.style, {
+    left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%',
+  })
+  draw()
+
+  const MIN = 0.05
+  rect.addEventListener('mousedown', e => {
+    e.preventDefault(); e.stopPropagation()
+    const handle = e.target.dataset.h || 'move'
+    const b = img.getBoundingClientRect()
+    const sx = e.clientX, sy = e.clientY, s = { ...r }
+    const move = ev => {
+      const dx = (ev.clientX - sx) / b.width, dy = (ev.clientY - sy) / b.height
+      let { x, y, w, h } = s
+      if (handle === 'move') {
+        x = Math.min(1 - w, Math.max(0, x + dx)); y = Math.min(1 - h, Math.max(0, y + dy))
+      } else {
+        if (handle.includes('w')) { const nx = Math.min(x + w - MIN, Math.max(0, x + dx)); w += x - nx; x = nx }
+        if (handle.includes('e')) w = Math.min(1 - x, Math.max(MIN, w + dx))
+        if (handle.includes('n')) { const ny = Math.min(y + h - MIN, Math.max(0, y + dy)); h += y - ny; y = ny }
+        if (handle.includes('s')) h = Math.min(1 - y, Math.max(MIN, h + dy))
+      }
+      r = { x, y, w, h }; draw()
+    }
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  })
+
+  const end = () => {
+    rect.remove(); bar.remove(); box.classList.remove('cropping')
+    window.removeEventListener('keydown', onKey, true)
+  }
+  const finish = async () => {
+    end()
+    if (r.x < 0.001 && r.y < 0.001 && r.w > 0.999 && r.h > 0.999) return      // 没动过框
+    try {
+      const sw = Math.max(1, Math.round(r.w * img.naturalWidth)), sh = Math.max(1, Math.round(r.h * img.naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = sw; canvas.height = sh
+      canvas.getContext('2d').drawImage(img, Math.round(r.x * img.naturalWidth), Math.round(r.y * img.naturalHeight), sw, sh, 0, 0, sw, sh)
+      const node = editor.state.doc.nodeAt(pos)
+      const jpeg = /\.(jpe?g)$/i.test(node?.attrs.src || '')                // 照片存 JPEG，截图等存 PNG
+      const blob = await new Promise(res => canvas.toBlob(res, jpeg ? 'image/jpeg' : 'image/png', 0.92))
+      const data = await readBase64(blob)
+      const res = await host.call('attachment_add', {
+        note_id: noteId, data, original_name: '裁剪.' + (jpeg ? 'jpg' : 'png'), width: sw, height: sh,
+      })
+      const cur = editor.state.doc.nodeAt(pos)
+      if (cur?.type.name !== 'image') return
+      const oldPx = widthPx(cur.attrs.width) ?? box.getBoundingClientRect().width
+      editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, {
+        ...cur.attrs, src: res.src, width: Math.max(IMG_MIN_WIDTH, Math.round(oldPx * r.w)) + 'px',   // 框住的部分显示大小不变
+      }))
+    } catch (e) {
+      toast('裁剪失败：' + e.message)
+    }
+  }
+  const onKey = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end() }
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish() }
+  }
+  window.addEventListener('keydown', onKey, true)
+  cancelBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); end() })
+  okBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); finish() })
+}
+
 window.noteEditor._refresh = setupToolbar()
+
+// 页面滚动了多少 → 告诉宿主，宿主把顶上那块（标题、案主…）往上挪同样多，看起来就是一起滚。
+// 每一帧最多报一次，不会刷屏。
+let scrollQueued = false
+window.addEventListener('scroll', () => {
+  if (scrollQueued) return
+  scrollQueued = true
+  requestAnimationFrame(() => {
+    scrollQueued = false
+    host.notify('scroll', { y: Math.max(0, window.scrollY) })
+  })
+}, { passive: true })
+
 host.notify('ready')
 window.__noteEditorReady = true

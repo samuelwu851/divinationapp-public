@@ -126,9 +126,16 @@ struct DivinationClient {
         let req: [String: Any] = ["cmd": "note_list", "keyword": filter.keyword,
                                   "label_ids": filter.labels.map(\.id),
                                   "subject_ids": filter.subjects.map(\.id),
-                                  "shushu": filter.shushu.map(\.code)]
+                                  "shushu": filter.shushu.map(\.code),
+                                  "chart_query": filter.chartBlocks.map { ["type": $0.type, "fields": $0.fields] }]
         let r: NoteListResult? = decode(send(req))
         return r?.notes ?? []
+    }
+
+    /// 按排盘搜索的面板：各术数能按什么搜（八字八个字、梅花本卦变卦的上下卦…）。
+    func chartSearchForms() -> [ChartSearchForm] {
+        let r: ChartSearchFormsResult? = decode(send(["cmd": "chart_search_forms"]))
+        return r?.forms ?? []
     }
 
     /// 全部标签（搜索筛选的下拉菜单用），常用的在前。
@@ -247,6 +254,33 @@ struct DivinationClient {
         decode(send(["cmd": "note_update", "note_id": id, "title": title, "body": body]))
     }
 
+    /// 放进回收站（可以恢复）。
+    @discardableResult
+    func noteTrash(id: Int) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "note_trash", "note_id": id]))
+        return r?.ok ?? false
+    }
+
+    @discardableResult
+    func noteRestore(id: Int) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "note_restore", "note_id": id]))
+        return r?.ok ?? false
+    }
+
+    /// 回收站里的笔记（最近删的在前）。
+    func trashList() -> [Note] {
+        let r: NoteListResult? = decode(send(["cmd": "trash_list"]))
+        return r?.notes ?? []
+    }
+
+    /// 清空回收站（彻底删除，连同排盘、图片）。
+    @discardableResult
+    func trashEmpty() -> Bool {
+        let r: OkResult? = decode(send(["cmd": "trash_empty"]))
+        return r?.ok ?? false
+    }
+
+    /// 彻底删除一篇笔记（连同排盘、图片文件），不进回收站。
     @discardableResult
     func noteDelete(id: Int) -> Bool {
         let r: OkResult? = decode(send(["cmd": "note_delete", "note_id": id]))

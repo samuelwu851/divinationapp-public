@@ -5,7 +5,7 @@ import os
 import uuid
 from datetime import datetime
 
-from divination.casebook import body as body_mod, charts, db, repository as repo, shushu
+from divination.casebook import body as body_mod, chart_facts, charts, db, repository as repo, shushu
 from divination.ganzhi.repository import solar_moment
 from datetime import datetime
 
@@ -20,8 +20,13 @@ def get_note(note_id: int) -> dict:
 
 
 # 列出笔记（可按关键字 / 标签 / 案主 / 术数筛选，所有条件同时满足，见 repo.list_notes）
-def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=()) -> list[dict]:
-    notes = repo.list_notes((keyword or "").strip(), label_ids or (), subject_ids or (), shushu_codes or ())
+def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=(), trashed: bool = False,
+               chart_query: list | None = None) -> list[dict]:
+    blocks = chart_facts.clean_query(chart_query)
+    notes = repo.list_notes((keyword or "").strip(), label_ids or (), subject_ids or (), shushu_codes or (), trashed,
+                            blocks)
+    if len(blocks) > 1:
+        notes = _match_chart_blocks(notes, blocks)
     by_note = {}
     for row in repo.get_all_note_subjects():
         by_note.setdefault(row["note_id"], []).append({"id": row["id"], "name": row["name"]})
@@ -52,6 +57,54 @@ def delete_note(note_id: int) -> None:
         raise LookupError(f"笔记不存在：{note_id}")
     db.get().commit()
     _remove_files(filenames)
+
+# ---------- 排盘搜索 ----------
+
+def _match_chart_blocks(notes: list[dict], blocks: list[dict]) -> list[dict]:
+    """精筛：每个条件块要由笔记里**不同的**排盘满足（加了两个八字块 → 要有两张八字分别满足）。"""
+    by_chart: dict[int, dict] = {}
+    for r in repo.chart_facts_of_notes([n["id"] for n in notes], list({b["type"] for b in blocks})):
+        c = by_chart.setdefault(r["chart_id"], {"id": r["chart_id"], "note_id": r["note_id"], "type": r["type"], "facts": {}})
+        if r["key"] is not None:
+            c["facts"][r["key"]] = r["value"]
+    charts_by_note: dict[int, list[dict]] = {}
+    for c in by_chart.values():
+        charts_by_note.setdefault(c["note_id"], []).append(c)
+    return [n for n in notes if chart_facts.match_distinct(blocks, charts_by_note.get(n["id"], []))]
+
+
+def backfill_chart_facts() -> int:
+    """给还没拆过、或者是旧版本拆的排盘重拆特征（老数据 / 新加了可搜索的术数或字段）。
+    打开案例库时调用；返回重拆了几个。"""
+    rows = repo.charts_needing_facts(list(chart_facts.REGISTRY), chart_facts.VERSION_KEY, chart_facts.FACTS_VERSION)
+    with db.get():
+        for r in rows:
+            repo.delete_chart_facts(r["id"])
+            repo.insert_chart_facts(r["id"], r["type"], chart_facts.extract(r["type"], json.loads(r["snapshot_json"])))
+    return len(rows)
+
+
+# ---------- 回收站：删除笔记先放进来，可以恢复；在回收站里再删才是彻底删除 ----------
+
+def trash_note(note_id: int) -> None:
+    with db.get():
+        if repo.set_note_trashed(note_id, True) == 0:
+            raise LookupError(f"笔记不存在：{note_id}")
+
+
+def restore_note(note_id: int) -> None:
+    with db.get():
+        if repo.set_note_trashed(note_id, False) == 0:
+            raise LookupError(f"笔记不存在：{note_id}")
+
+
+def empty_trash() -> int:
+    """清空回收站：里面的笔记全部彻底删除（连同排盘、图片文件）。返回删了几篇。"""
+    ids = repo.list_trashed_note_ids()
+    for nid in ids:
+        delete_note(nid)
+    return len(ids)
+
 
 # 新建笔记
 def create_note(title: str, body: str, subject_ids: list[int] = ()) -> dict:
@@ -97,6 +150,7 @@ def create_chart(note_id: int, chart_type: str, params: dict) -> dict:
             note_id, chart_type, title,
             _to_json(params), _to_json(snapshot), charts.ALGO_VERSION,
         )
+        repo.insert_chart_facts(chart_id, chart_type, chart_facts.extract(chart_type, snapshot))   # 供按排盘搜索
     return get_chart(chart_id)
 
 
@@ -357,6 +411,7 @@ def _to_json(data) -> str:
 
 def _open_cmd(req: dict) -> str:
     db.init(req["path"])
+    backfill_chart_facts()
     return _to_json({"ok": True, "attachments_dir": db.attachments_dir()})
 
 def _note_get_cmd(req: dict) -> str:
@@ -366,10 +421,28 @@ def _note_list_cmd(req: dict) -> str:
     # 筛选条件都可省；标签 / 案主 / 术数都是列表，可以多选（都要满足）
     return _to_json({"notes": list_notes(
         req.get("keyword", ""), req.get("label_ids", []), req.get("subject_ids", []), req.get("shushu", []),
+        chart_query=req.get("chart_query"),       # 条件块列表，见 chart_facts.py
     )})
+
+def _chart_search_forms_cmd(req: dict) -> str:
+    return _to_json({"forms": chart_facts.forms()})
 
 def _note_update_cmd(req: dict) -> str:
     return _to_json(update_note(req["note_id"], req.get("title", ""), req.get("body", "")))
+
+def _note_trash_cmd(req: dict) -> str:
+    trash_note(req["note_id"])
+    return _to_json({"ok": True})
+
+def _note_restore_cmd(req: dict) -> str:
+    restore_note(req["note_id"])
+    return _to_json({"ok": True})
+
+def _trash_list_cmd(req: dict) -> str:
+    return _to_json({"notes": list_notes(trashed=True)})
+
+def _trash_empty_cmd(req: dict) -> str:
+    return _to_json({"ok": True, "deleted": empty_trash()})
 
 def _note_delete_cmd(req: dict) -> str:
     delete_note(req["note_id"])
@@ -463,7 +536,12 @@ COMMANDS = {
     "note_get": _note_get_cmd,
     "note_list": _note_list_cmd,
     "note_update": _note_update_cmd,
-    "note_delete": _note_delete_cmd,
+    "note_delete": _note_delete_cmd,          # 彻底删除（回收站里的「彻底删除」、新建没保存就离开）
+    "note_trash": _note_trash_cmd,            # 放进回收站
+    "note_restore": _note_restore_cmd,        # 从回收站恢复
+    "trash_list": _trash_list_cmd,            # 回收站里的笔记
+    "trash_empty": _trash_empty_cmd,          # 清空回收站
+    "chart_search_forms": _chart_search_forms_cmd,   # 按排盘搜索的面板（各术数能按什么搜）
     "note_subject_add": _note_subject_add_cmd,
     "note_subject_remove": _note_subject_remove_cmd,
     "note_cleanup": _note_cleanup_cmd,

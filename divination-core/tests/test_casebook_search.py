@@ -139,3 +139,98 @@ def test_subject_and_label_search_ignore_english_case():
     assert [x["id"] for x in call("subject_search", keyword="tom")["subjects"]] == [tom["id"]]
     call("label_create", name="Work")
     assert [l["name"] for l in call("label_search", keyword="wORK")["labels"]] == ["Work"]
+
+
+def test_trash_restore_purge(data):
+    a, c = data["a"], data["c"]
+    assert call("note_trash", note_id=a) == {"ok": True}
+    assert a not in ids()                                            # 正常列表里没有了
+    assert a not in ids(subject_ids=[data["zhang"]])                 # 筛选也不出现
+    assert [n["id"] for n in call("trash_list")["notes"]] == [a]
+    assert call("trash_list")["notes"][0]["deleted_at"]
+    subs = {s["name"]: s for s in call("subject_list")["subjects"]}
+    assert subs["张三"]["note_count"] == 1                           # 回收站里的不算
+    assert call("note_restore", note_id=a) == {"ok": True}
+    assert a in ids() and call("trash_list")["notes"] == []
+    call("note_trash", note_id=a); call("note_trash", note_id=c)
+    assert call("trash_empty") == {"ok": True, "deleted": 2}
+    assert "error" in call("note_get", note_id=a) and "error" in call("note_get", note_id=c)
+    assert ids() == [data["b"]]
+    assert "error" in call("note_trash", note_id=9999)
+
+
+def _chart(note_id, chart_type, params):
+    c = call("chart_create", note_id=note_id, type=chart_type, params=params)
+    return c
+
+
+def _q(*blocks):
+    return [{"type": t, "fields": f} for t, f in blocks]
+
+
+def test_search_by_chart_blocks():
+    n1 = call("note_create", title="甲")
+    n2 = call("note_create", title="乙")
+    b1 = _chart(n1["id"], "bazi", {"year": 1990, "month": 5, "day": 1, "hour": 8, "minute": 0, "is_male": True})
+    _chart(n2["id"], "bazi", {"year": 1986, "month": 3, "day": 15, "hour": 20, "minute": 0, "is_male": False})
+    p = {k: v["ganzhi"] for k, v in b1["snapshot"]["chart"]["pillars"].items()}      # 庚午 庚辰 丙寅 壬辰
+    assert ids(chart_query=_q(("bazi", {"year_gan": p["year"][0]}))) == [n1["id"]]
+    assert ids(chart_query=_q(("bazi", {"year_gan": p["year"][0], "hour_zhi": p["hour"][1]}))) == [n1["id"]]
+    assert ids(chart_query=_q(("bazi", {"year_gan": p["year"][0], "hour_zhi": "子"}))) == []   # 同一张盘要同时满足
+    assert ids(chart_query=_q(("bazi", {}))) == sorted([n1["id"], n2["id"]])                   # 空块 = 有八字就行
+    assert ids(chart_query=_q(("bazi", {"gender": "male"}))) == [n1["id"]]
+    assert ids(chart_query=_q(("bazi", {"gender": "female"}))) == [n2["id"]]
+    # 两个八字块：要有两张不同的八字分别满足
+    assert ids(chart_query=_q(("bazi", {"gender": "male"}), ("bazi", {}))) == []                # n1 只有一张八字
+    _chart(n1["id"], "bazi", {"year": 2000, "month": 1, "day": 1, "hour": 0, "minute": 0, "is_male": False})
+    assert ids(chart_query=_q(("bazi", {"gender": "male"}), ("bazi", {"gender": "female"}))) == [n1["id"]]
+    assert ids(chart_query=_q(("bazi", {"gender": "male"}), ("bazi", {"gender": "male"}))) == []
+    # 八字 + 梅花：两种都要有
+    m = _chart(n1["id"], "meihua", {"year": 2026, "month": 3, "day": 5, "hour": 10, "minute": 0})
+    from divination.casebook import chart_facts as cf
+    facts = dict(cf.extract("meihua", m["snapshot"]))
+    assert {"ben_upper", "ben_lower", "bian_upper", "bian_lower"} <= set(facts)
+    both = _q(("bazi", {"day_gan": p["day"][0]}), ("meihua", {"ben_upper": facts["ben_upper"], "bian_lower": facts["bian_lower"]}))
+    assert ids(chart_query=both) == [n1["id"]]
+    other = "坤" if facts["ben_upper"] != "坤" else "乾"
+    assert ids(chart_query=_q(("bazi", {}), ("meihua", {"ben_upper": other}))) == []
+
+
+def test_search_iching_has_change():
+    n1 = call("note_create", title="有变")
+    n2 = call("note_create", title="没变")
+    _chart(n1["id"], "iching", {"org_value": 63, "chg_value": 31})       # 乾 → 姤
+    _chart(n2["id"], "iching", {"org_value": 63, "chg_value": 63})
+    assert ids(chart_query=_q(("iching", {"has_change": "yes"}))) == [n1["id"]]
+    assert ids(chart_query=_q(("iching", {"has_change": "no"}))) == [n2["id"]]
+    assert ids(chart_query=_q(("iching", {"bian_lower": "巽"}))) == [n1["id"]]                  # 姤：乾上巽下
+    assert ids(chart_query=_q(("iching", {"ben_upper": "乾", "bian_upper": "乾"}))) == sorted([n1["id"], n2["id"]])
+
+
+def test_chart_search_forms():
+    forms = {f["type"]: f for f in call("chart_search_forms")["forms"]}
+    labels = [x["label"] for x in forms["bazi"]["fields"]]
+    assert labels[0] == "性别" and labels[1:5] == ["年干", "月干", "日干", "时干"]
+    assert forms["bazi"]["fields"][0]["style"] == "checks"
+    assert len(forms["bazi"]["fields"]) == 9 and len(forms["meihua"]["fields"]) == 4
+    assert [x["key"] for x in forms["iching"]["fields"]][0] == "has_change"
+    assert [o["label"] for o in forms["meihua"]["fields"][0]["options"]][:3] == ["乾", "兑", "离"]
+
+
+def test_backfill_old_charts(tmp_path):
+    """升级前就存在的排盘（没有特征）：打开案例库时自动补上。"""
+    import sqlite3
+    path = tmp_path / "x.db"
+    call("casebook_open", path=str(path))
+    n = call("note_create", title="老")
+    c = _chart(n["id"], "bazi", {"year": 1990, "month": 5, "day": 1, "hour": 8, "minute": 0, "is_male": True})
+    con = sqlite3.connect(path); con.execute("DELETE FROM chart_facts"); con.commit(); con.close()
+    call("casebook_open", path=str(path))
+    gan = c["snapshot"]["chart"]["pillars"]["year"]["ganzhi"][0]
+    assert ids(chart_query=_q(("bazi", {"year_gan": gan}))) == [n["id"]]
+    # 旧版本拆的特征（没有性别）：版本号对不上 → 打开时重拆
+    con = sqlite3.connect(path)
+    con.execute("DELETE FROM chart_facts WHERE key IN ('gender')"); con.execute("UPDATE chart_facts SET value = '1' WHERE key = '_v'")
+    con.commit(); con.close()
+    call("casebook_open", path=str(path))
+    assert ids(chart_query=_q(("bazi", {"gender": "male"}))) == [n["id"]]

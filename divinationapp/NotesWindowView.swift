@@ -8,12 +8,17 @@ enum NotesRoute: Hashable {
     case editor(NoteEditTarget)
     case subjects
     case subject(Int)
+    case trash
 }
 
 /// 笔记（案例库）独立窗口：顶部搜索栏 + 筛选（标签 / 案主 / 术数）+ 笔记列表；
 /// 底部菜单栏（同主窗口的胶囊样式）：笔 = 新建笔记，人 = 案主。
 /// 点列表一条 → 进编辑器。编辑器、案主页都是推入的下一页（左上角返回）。
 struct NotesWindowView: View {
+    /// 笔记窗最窄 518：编辑器工具栏按这个宽度排成一行，再窄会折成好几行、正文被挤成一条（见 note-editor.html）。
+    /// 设在 NavigationStack 外面，推进去的编辑器、案主页也一样受限。
+    static let minWidth: CGFloat = 518
+
     private let client = DivinationClient()
 
     @State private var path: [NotesRoute] = []
@@ -24,18 +29,23 @@ struct NotesWindowView: View {
     @State private var allLabels: [NoteLabel] = []
     @State private var allSubjects: [Subject] = []
     @State private var allShushu: [Shushu] = []
+    @State private var chartForms: [ChartSearchForm] = []
+    @State private var showChartSearch = false
 
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
-                searchBar
+                HStack(spacing: 0) {
+                    searchBar
+                    chartSearchButton                      // 搜索框右边：按排盘搜
+                }
                 filterBar
                 Divider()
                 list
                 Divider()
                 bottomBar
             }
-            .frame(minWidth: 300, minHeight: 360)
+            .frame(minWidth: Self.minWidth, minHeight: 360)
             .background(PatternBackground())          // 与排盘同款背景纹理
             .navigationDestination(for: NotesRoute.self) { route in
                 switch route {
@@ -45,6 +55,8 @@ struct NotesWindowView: View {
                     SubjectListView(client: client) { path.append($0) }
                 case .subject(let id):
                     SubjectDetailView(client: client, subjectId: id) { path.append($0) }
+                case .trash:
+                    TrashView(client: client) { reload() }       // 恢复后主列表马上刷新
                 }
             }
             .onAppear { reload() }                     // 从编辑器 / 案主页返回时也刷新
@@ -53,6 +65,7 @@ struct NotesWindowView: View {
             .background(NotesWindowAccessor())         // 注册到窗口管理器（贴合主窗）
             #endif
         }
+        .frame(minWidth: Self.minWidth)                 // 编辑器 / 案主页推进来也不能再窄
     }
 
     // MARK: - 顶部：关键字搜索（标题 + 正文）
@@ -72,8 +85,32 @@ struct NotesWindowView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.12)))
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
         .padding(.top, 12)
+    }
+
+    /// 搜索框右边的「搜索排盘」按钮：选了排盘条件时变成强调色、带数字。
+    private var chartSearchButton: some View {
+        Button { showChartSearch = true } label: {
+            HStack(spacing: 3) {
+                Image(systemName: filter.chartBlocks.isEmpty
+                      ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    .font(.system(size: 20))
+                if !filter.chartBlocks.isEmpty {
+                    Text("\(filter.chartBlocks.count)").font(.caption).bold()
+                }
+            }
+            .foregroundStyle(filter.chartBlocks.isEmpty ? Color.secondary : Color.accentColor)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("搜索排盘")
+        .padding(.trailing, 12)
+        .padding(.top, 12)
+        .popover(isPresented: $showChartSearch, arrowEdge: .bottom) {
+            ChartSearchPanel(forms: chartForms, blocks: $filter.chartBlocks)
+        }
     }
 
     // MARK: - 筛选：标签 / 案主 / 术数（每类可多选；所有条件同时满足）
@@ -110,7 +147,8 @@ struct NotesWindowView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                NoteList(notes: notes) { path.append(.editor(.edit($0))) }
+                NoteList(notes: notes, onOpen: { path.append(.editor(.edit($0))) },
+                         onTrash: { client.noteTrash(id: $0); reload() })
             }
         }
     }
@@ -124,6 +162,9 @@ struct NotesWindowView: View {
             }
             barButton(help: "案主") { path.append(.subjects) } icon: {
                 PersonIcon(color: .secondary, lineWidth: 1.8)
+            }
+            barButton(help: "回收站") { path.append(.trash) } icon: {
+                Image(systemName: "trash").font(.system(size: 19)).foregroundStyle(.secondary)
             }
         }
         .padding(5)
@@ -152,6 +193,7 @@ struct NotesWindowView: View {
         allLabels = client.labelList()
         allSubjects = client.subjectList()
         allShushu = client.shushuList()
+        if chartForms.isEmpty { chartForms = client.chartSearchForms() }
         // 选中的标签 / 案主已经被删了（或改了名）→ 跟着更新，避免拿旧条件去搜
         filter.labels = filter.labels.compactMap { l in allLabels.first { $0.id == l.id } }
         filter.subjects = filter.subjects.compactMap { s in allSubjects.first { $0.id == s.id } }
@@ -308,22 +350,36 @@ private struct FilterPicker<Item: Identifiable & Equatable>: View {
 }
 
 /// 笔记列表（主列表和案主页共用）：点一条 → onOpen(笔记 id)。
+/// 删除（放进回收站）三种方式：右键「移到回收站」；两指往左滑 / 鼠标按住往左拖 → 点红色垃圾桶。
 struct NoteList: View {
     let notes: [Note]
     var onOpen: (Int) -> Void
+    var onTrash: (Int) -> Void
+
+    @State private var swipe = SwipeState()
 
     var body: some View {
         GeometryReader { geo in
             List(notes) { note in
-                NoteRow(note: note,
-                        maxTextWidth: geo.size.width * 0.75,   // 标题/预览最多占 3/4 宽
-                        windowWidth: geo.size.width)           // 时间按窗宽决定全显/省略
-                    .contentShape(Rectangle())
-                    .onTapGesture { onOpen(note.id) }
+                SwipeToTrashRow(id: note.id, swipe: swipe,
+                                onTap: { onOpen(note.id) },
+                                onTrash: { swipe.reset(); onTrash(note.id) }) {
+                    NoteRow(note: note,
+                            maxTextWidth: geo.size.width * 0.75,   // 标题/预览最多占 3/4 宽
+                            windowWidth: geo.size.width)           // 时间按窗宽决定全显/省略
+                }
+                .contextMenu {
+                    Button("移到回收站", role: .destructive) { swipe.reset(); onTrash(note.id) }
+                }
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)   // 透出背景纹理
         }
+        .onChange(of: notes.map(\.id)) { _, _ in swipe.reset() }   // 列表内容变了（删除、恢复、筛选）：全部合上
+        #if os(macOS)
+        .onAppear { swipe.reset(); swipe.startTrackpad() }   // 从回收站等页面回来：全部合上
+        .onDisappear { swipe.stopTrackpad() }
+        #endif
     }
 }
 
@@ -469,14 +525,135 @@ struct LabelChipsLine: View {
 
 #if os(macOS)
 /// 把当前（笔记）窗口注册到 CasebookWindowManager，使其贴合主窗并跟随。
-private struct NotesWindowAccessor: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let v = NSView()
-        DispatchQueue.main.async {
-            if let w = v.window { CasebookWindowManager.shared.registerNotes(w) }
-        }
-        return v
+private struct NotesWindowAccessor: View {
+    var body: some View {
+        WindowReader { CasebookWindowManager.shared.registerNotes($0) }   // 进了窗口的那一刻才注册（见 WindowReader）
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 #endif
+
+/// 「搜索排盘」面板：点「＋ 选择术数」加一个条件块（新加的放在最上面，旧的往下挤），
+/// 每一块右上角的 × 去掉它。同一种术数可以加好几块：比如两块八字 = 笔记里要有两张八字分别满足。
+/// 改了马上生效（下面的笔记列表跟着变）；浮窗点别处才关。
+struct ChartSearchPanel: View {
+    let forms: [ChartSearchForm]
+    @Binding var blocks: [ChartQueryBlock]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(forms) { f in
+                        Button(f.title) {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                blocks.insert(ChartQueryBlock(type: f.type), at: 0)   // 新的在最上面
+                            }
+                        }
+                    }
+                } label: {
+                    Label("选择术数", systemImage: "plus")
+                        .font(.callout)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().stroke(Color.secondary.opacity(0.35),
+                                                     style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                Spacer()
+                Button("全部清空") { withAnimation { blocks = [] } }
+                    .disabled(blocks.isEmpty)
+            }
+            .padding(12)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if blocks.isEmpty {
+                        Text("点「＋ 选择术数」添加排盘条件")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    }
+                    ForEach($blocks) { $block in
+                        if let form = forms.first(where: { $0.type == block.type }) {
+                            BlockCard(form: form, block: $block) {
+                                withAnimation(.easeOut(duration: 0.15)) { blocks.removeAll { $0.id == block.id } }
+                            }
+                        }
+                    }
+                    if blocks.count > 1 {
+                        Text("每一块都要有一张排盘满足；同一种术数加了几块，就要有几张这种排盘分别满足。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(12)
+            }
+        }
+        // ⚠️ macOS 的 popover 只在弹出时定一次大小：用固定大小，内容在里面滚动
+        .frame(width: 400, height: 420)
+    }
+}
+
+/// 一个条件块：标题 + 右上角 ×；勾选类字段（性别、有没有变卦）一行，下拉类字段排成网格。
+private struct BlockCard: View {
+    let form: ChartSearchForm
+    @Binding var block: ChartQueryBlock
+    var onRemove: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(form.title).font(.subheadline).bold()
+            ForEach(form.fields.filter(\.isChecks)) { field in checks(field) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: max(1, form.columns)),
+                      alignment: .leading, spacing: 8) {
+                ForEach(form.fields.filter { !$0.isChecks }) { field in menu(field) }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2)))
+        .overlay(alignment: .topTrailing) {
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill").font(.callout).foregroundStyle(.white, .gray)
+            }
+            .buttonStyle(.plain)
+            .help("去掉这个条件")
+            .padding(6)
+        }
+    }
+
+    /// 互斥勾选框：勾一个 = 只要这种；再点一次取消 = 不限。
+    private func checks(_ field: ChartSearchForm.Field) -> some View {
+        HStack(spacing: 14) {
+            if !field.label.isEmpty {
+                Text(field.label).font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(field.options, id: \.value) { o in
+                Toggle(o.label, isOn: Binding(
+                    get: { block.fields[field.key] == o.value },
+                    set: { on in block.fields[field.key] = on ? o.value : nil }
+                ))
+                .toggleStyle(.checkbox)
+            }
+        }
+    }
+
+    private func menu(_ field: ChartSearchForm.Field) -> some View {
+        let selected = block.fields[field.key] ?? ""
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(field.label).font(.caption).foregroundStyle(.secondary)
+            Picker("", selection: Binding(
+                get: { selected },
+                set: { block.fields[field.key] = $0.isEmpty ? nil : $0 }
+            )) {
+                Text("不限").tag("")
+                ForEach(field.options, id: \.value) { o in Text(o.label).tag(o.value) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+    }
+}

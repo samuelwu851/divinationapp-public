@@ -32,6 +32,16 @@ final class NoteEditorController: NSObject {
     var onChange: () -> Void = {}
     var onOpenChart: (Int) -> Void = { _ in }
     var onLabelDeleted: (Int) -> Void = { _ in }
+    /// 页面滚动了多少（点）：宿主据此把顶上的标题 / 案主 / 标签 / 术数一起往上挪。
+    var onScroll: (CGFloat) -> Void = { _ in }
+
+    /// 页面顶上要留多高的空白（宿主盖在上面的那一块有多高）。
+    private var topInset: CGFloat = 0
+
+    /// 最近一次在图片上右键：哪张图、现在怎么对齐（网页在 contextmenu 事件里告诉我们，菜单弹出前就到）。
+    fileprivate struct ImageContext { let src: String; let align: String; let alt: String; let time: Date }
+    fileprivate var imageContext: ImageContext?
+    fileprivate var currentImage: ImageContext?     // 正在弹的图片菜单是针对哪张图
 
     /// 网页可以调用的后端命令（白名单）。
     private let allowedCommands: Set<String> = [
@@ -64,6 +74,13 @@ final class NoteEditorController: NSObject {
         webView?.evaluateJavaScript("window.noteEditor.setWuxingColor(\(on))")
     }
 
+    /// 宿主顶上那一块（标题、案主、标签、术数）的高度变了：页面顶上留同样高的空白。
+    func setTopInset(_ h: CGFloat) {
+        guard abs(h - topInset) > 0.5 else { return }
+        topInset = h
+        if ready { webView?.evaluateJavaScript("window.noteEditor.setTopInset(\(h))") }
+    }
+
     /// 某个标签被彻底删除了：让网页里的排盘卡片也去掉它。
     func labelDeleted(id: Int) {
         webView?.evaluateJavaScript("window.noteEditor.labelDeleted(\(id))")
@@ -86,7 +103,12 @@ final class NoteEditorController: NSObject {
         ucc.addScriptMessageHandler(proxy, contentWorld: .page, name: "bridge")
         ucc.add(proxy, name: "notify")
 
+        #if os(macOS)
+        let wv = NoteWebView(frame: .zero, configuration: config)
+        wv.controller = self                           // 右键点图片时换成图片专用菜单
+        #else
         let wv = WKWebView(frame: .zero, configuration: config)
+        #endif
         wv.navigationDelegate = self
         wv.uiDelegate = self
         #if os(macOS)
@@ -120,7 +142,15 @@ final class NoteEditorController: NSObject {
         switch event {
         case "ready":
             ready = true
+            webView?.evaluateJavaScript("window.noteEditor.setTopInset(\(topInset))")
             pushContent()
+        case "imageContext":
+            if let src = msg["src"] as? String {
+                imageContext = ImageContext(src: src, align: msg["align"] as? String ?? "left",
+                                            alt: msg["alt"] as? String ?? "", time: Date())
+            }
+        case "scroll":
+            if let y = (msg["y"] as? NSNumber)?.doubleValue { onScroll(CGFloat(y)) }
         case "changed":
             onChange()
         case "openChart":
@@ -163,6 +193,124 @@ final class NoteEditorController: NSObject {
         return "#" + h(c.red) + h(c.green) + h(c.blue)
     }
 }
+
+#if os(macOS)
+// MARK: - 图片右键菜单（macOS 原生菜单）
+
+/// 编辑器用的 WKWebView：右键点在图片上时，把系统默认菜单换成我们的图片菜单。
+final class NoteWebView: WKWebView {
+    weak var controller: NoteEditorController?
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        controller?.customizeMenu(menu)
+    }
+}
+
+extension NoteEditorController {
+    /// 刚才是在图片上右键（网页 0.8 秒内告诉过我们）→ 换成：左对齐 / 居中 / 右对齐 | 复制 / 粘贴 | 裁剪 / 另存为…
+    fileprivate func customizeMenu(_ menu: NSMenu) {
+        guard let ctx = imageContext, Date().timeIntervalSince(ctx.time) < 0.8 else { return }
+        imageContext = ImageContext(src: ctx.src, align: ctx.align, alt: ctx.alt, time: .distantPast)   // 用过就作废，下次右键别处不受影响
+        currentImage = ctx
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+
+        func item(_ title: String, _ action: Selector, key: String = "", on: Bool = false, enabled: Bool = true) {
+            let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            it.target = self
+            it.state = on ? .on : .off
+            it.isEnabled = enabled
+            menu.addItem(it)
+        }
+        item("左对齐", #selector(menuAlignLeft), on: ctx.align == "left")
+        item("居中", #selector(menuAlignCenter), on: ctx.align == "center")
+        item("右对齐", #selector(menuAlignRight), on: ctx.align == "right")
+        menu.addItem(.separator())
+        item("复制", #selector(menuCopy))
+        item("粘贴（替换这张图）", #selector(menuPaste), enabled: Self.pasteboardHasImage())
+        menu.addItem(.separator())
+        item("裁剪", #selector(menuCrop))
+        item("另存为…", #selector(menuSaveAs))
+    }
+
+    @objc private func menuAlignLeft() { webView?.evaluateJavaScript("window.noteEditor.imageAlign('left')") }
+    @objc private func menuAlignCenter() { webView?.evaluateJavaScript("window.noteEditor.imageAlign('center')") }
+    @objc private func menuAlignRight() { webView?.evaluateJavaScript("window.noteEditor.imageAlign('right')") }
+    @objc private func menuCrop() { webView?.evaluateJavaScript("window.noteEditor.cropContextImage()") }
+
+    /// 复制：把图片放进系统剪贴板（可以粘到别的 App）。
+    @objc private func menuCopy() {
+        guard let url = currentImageFile(), let image = NSImage(contentsOf: url) else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects([image])
+    }
+
+    /// 粘贴：剪贴板里的图片存进 App，替换这张图（宽度、对齐不变）。
+    @objc private func menuPaste() {
+        guard let (data, name) = Self.pasteboardImage() else { return }
+        let params: [String: Any] = ["note_id": noteId, "data": data.base64EncodedString(), "original_name": name]
+        guard let json = client.dispatchRaw(cmd: "attachment_add", params: params),
+              let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let src = obj["src"] as? String else { return }
+        let args = (try? JSONSerialization.data(withJSONObject: [src, name])).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        webView?.evaluateJavaScript("window.noteEditor.replaceContextImage(...\(args))")
+    }
+
+    /// 另存为：把原图文件（不是缩放后的）存到用户选的位置。
+    @objc private func menuSaveAs() {
+        guard let url = currentImageFile() else { return }
+        let panel = NSSavePanel()
+        let ext = url.pathExtension
+        let alt = currentImage?.alt ?? ""
+        let base = alt.isEmpty ? "图片" : (alt as NSString).deletingPathExtension
+        panel.nameFieldStringValue = ext.isEmpty ? base : "\(base).\(ext)"
+        if let type = UTType(filenameExtension: ext) { panel.allowedContentTypes = [type] }
+        panel.canCreateDirectories = true
+        let save = { (dest: URL) in
+            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.copyItem(at: url, to: dest)
+        }
+        if let window = webView?.window {
+            panel.beginSheetModal(for: window) { resp in if resp == .OK, let dest = panel.url { save(dest) } }
+        } else if panel.runModal() == .OK, let dest = panel.url {
+            save(dest)
+        }
+    }
+
+    /// 右键点中的那张图在磁盘上的文件（attachment:文件名 → 图片文件夹里的文件）。
+    private func currentImageFile() -> URL? {
+        guard let src = currentImage?.src, src.hasPrefix("attachment:"),
+              let dir = CasebookPaths.attachmentsDir else { return nil }
+        let name = String(src.dropFirst("attachment:".count))
+        guard !name.contains("/") else { return nil }
+        return dir.appendingPathComponent(name)
+    }
+
+    private static func pasteboardHasImage() -> Bool {
+        let pb = NSPasteboard.general
+        return pb.canReadObject(forClasses: [NSImage.self], options: nil)
+            || pb.canReadObject(forClasses: [NSURL.self],
+                                options: [.urlReadingContentsConformToTypes: [UTType.image.identifier]])
+    }
+
+    /// 剪贴板里的图片 → (文件数据, 文件名)。复制的是图片文件就用原文件（保留 JPEG 等格式），否则转成 PNG。
+    private static func pasteboardImage() -> (Data, String)? {
+        let pb = NSPasteboard.general
+        if let urls = pb.readObjects(forClasses: [NSURL.self],
+                                     options: [.urlReadingFileURLsOnly: true,
+                                               .urlReadingContentsConformToTypes: [UTType.image.identifier]]) as? [URL],
+           let url = urls.first, let data = try? Data(contentsOf: url) {
+            return (data, url.lastPathComponent)
+        }
+        guard let image = pb.readObjects(forClasses: [NSImage.self])?.first as? NSImage,
+              let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        return (png, "粘贴.png")
+    }
+}
+#endif
 
 // MARK: - 导航：只允许编辑器自己的页面
 

@@ -41,10 +41,42 @@ struct NoteFilter: Equatable {
     var labels: [NoteLabel] = []
     var subjects: [Subject] = []
     var shushu: [Shushu] = []
+    /// 按排盘搜的条件块（新加的在最前面）；每一块要由笔记里**不同的**排盘满足（见 ChartSearchPanel）
+    var chartBlocks: [ChartQueryBlock] = []
 
     var isEmpty: Bool {
         keyword.trimmingCharacters(in: .whitespaces).isEmpty && labels.isEmpty && subjects.isEmpty && shushu.isEmpty
+            && chartBlocks.isEmpty
     }
+}
+
+/// 一个排盘条件块：某种术数 + 选了哪些值（没选的字段 = 不限；一个字段都没选 = 有这种排盘就行）。
+struct ChartQueryBlock: Identifiable, Equatable {
+    let id = UUID()
+    let type: String
+    var fields: [String: String] = [:]
+}
+
+/// 按排盘搜索的面板（后端 chart_search_forms 给）：每种术数一组下拉框。
+struct ChartSearchForm: Codable, Identifiable {
+    struct Option: Codable, Hashable { let value: String; let label: String }
+    struct Field: Codable, Identifiable {
+        let key: String
+        let label: String
+        var style: String? = nil          // "menu" 下拉框 / "checks" 互斥勾选框（男 / 女、有变卦 / 没变卦）
+        let options: [Option]
+        var id: String { key }
+        var isChecks: Bool { style == "checks" }
+    }
+    let type: String
+    let title: String
+    let columns: Int
+    let fields: [Field]
+    var id: String { type }
+}
+
+struct ChartSearchFormsResult: Codable {
+    let forms: [ChartSearchForm]
 }
 
 /// 一条笔记。
@@ -60,6 +92,7 @@ struct Note: Codable, Identifiable {
     var subjects: [Subject]?
     var labels: [NoteLabel]?     // 列表右上角显示
     var shushu: [Shushu]?        // 用了哪些术数
+    var deletedAt: String?       // 放进回收站的时间（只有回收站列表有）
 }
 
 /// 标签（「算什么事」，如疾病、感情）：笔记和排盘共用一份清单，名字唯一。

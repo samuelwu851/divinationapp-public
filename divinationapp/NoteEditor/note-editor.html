@@ -152,7 +152,28 @@
   .cc-missing { color: var(--secondary); font-size: 14px; }
 
   /* ---------- 图片（拖右下角圆点调大小） ---------- */
+  /* 正文最多 760 宽、居中：窗口很宽时一行字不会太长（工具栏跟着对齐） */
+  #editor, .toolbar { max-width: 760px; margin-left: auto; margin-right: auto; }
+  /* 图片：宽度是像素（窗口变宽不跟着放大）；窗口比图窄时缩到放得下；不超过原图像素宽度（JS 里设 max-width） */
   .img-box { position: relative; display: block; max-width: 100%; margin: 4px 0; line-height: 0; }
+  .img-box[data-align="center"] { margin-left: auto; margin-right: auto; }
+  .img-box[data-align="right"] { margin-left: auto; margin-right: 0; }
+  /* 裁剪：框外压暗，框可拖动；四角四边有把手（放在框里面：裁剪时图片外面会被裁掉，伸出去就点不到了） */
+  .img-box.cropping { overflow: hidden; outline: 2px solid var(--accent); }
+  .crop-rect { position: absolute; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); outline: 1px solid #fff; cursor: move; }
+  .crop-rect .ch { position: absolute; width: 12px; height: 12px; background: #fff; border: 1px solid #888; border-radius: 2px; }
+  .crop-rect .ch[data-h="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+  .crop-rect .ch[data-h="ne"] { right: 0; top: 0; cursor: nesw-resize; }
+  .crop-rect .ch[data-h="sw"] { left: 0; bottom: 0; cursor: nesw-resize; }
+  .crop-rect .ch[data-h="se"] { right: 0; bottom: 0; cursor: nwse-resize; }
+  .crop-rect .ch[data-h="n"] { left: calc(50% - 6px); top: 0; cursor: ns-resize; }
+  .crop-rect .ch[data-h="s"] { left: calc(50% - 6px); bottom: 0; cursor: ns-resize; }
+  .crop-rect .ch[data-h="w"] { left: 0; top: calc(50% - 6px); cursor: ew-resize; }
+  .crop-rect .ch[data-h="e"] { right: 0; top: calc(50% - 6px); cursor: ew-resize; }
+  .crop-bar { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; line-height: 1.4; z-index: 3; }
+  .crop-bar button { font: 13px -apple-system, "PingFang SC", sans-serif; padding: 3px 10px; border-radius: 6px;
+    border: 1px solid rgba(0,0,0,.2); background: #fff; color: #222; cursor: pointer; }
+  .crop-bar button.ok { background: var(--accent); color: #fff; border-color: transparent; }
   .img-box img { width: 100%; height: auto; border-radius: 6px; }
   .img-box .handle { position: absolute; right: -6px; bottom: -6px; width: 14px; height: 14px; border-radius: 50%;
     background: var(--accent); border: 2px solid #fff; cursor: nwse-resize; display: none; }
@@ -169,6 +190,9 @@
 </style>
 </head>
 <body>
+  <!-- 页面顶上留给宿主的标题 / 案主 / 标签 / 术数（它们是 SwiftUI，盖在这块空白上，跟着页面一起滚走）；
+       高度由宿主 noteEditor.setTopInset() 设定。滚过这块以后，工具栏 sticky 停在最上面。 -->
+  <div id="top-inset"></div>
   <div class="toolbar" id="toolbar">
     <button data-cmd="bold" title="粗体 ⌘B"><b>B</b></button>
     <button data-cmd="italic" title="斜体 ⌘I"><i>I</i></button>

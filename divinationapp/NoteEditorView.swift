@@ -45,11 +45,36 @@ struct NoteEditorView: View {
 
     @State private var showUnsavedAlert = false
     @State private var showInsertChart = false
+    @State private var confirmTrash = false
     @State private var showPickPosition = false   // 光标不在正文 → 提示先选位置
     @State private var openChart: ChartID?
     @State private var editor = NoteEditorController()
+    @State private var headerHeight: CGFloat = 0      // 顶上那一块（标题…术数）的高度
+    @State private var scrollY: CGFloat = 0           // 网页滚了多少
 
     private var isNew: Bool { if case .new = target { return true } else { return false } }
+
+    /// 顶上那一块：标题、案主、标签、术数（和正文之间一条分隔线）。
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("标题", text: $title)
+                .font(.title2).bold()
+                .textFieldStyle(.plain)
+
+            // 案主增删只改本地，点「保存」时才写后端
+            SubjectPicker(client: client, selected: $subjects)
+
+            // 标签、术数两行挨在一起：「＋」按钮固定在最左，已选的往右排，放不下可以左右滑
+            VStack(alignment: .leading, spacing: 2) {
+                // 标签（算什么事）：同样只改本地，保存时写后端
+                LabelPicker(client: client, selected: $labels, onLabelDeleted: { labelDeleted($0) })
+                // 术数：同样只改本地，保存时写后端；插入排盘会自动勾上对应的术数
+                ShushuPicker(catalog: shushuCatalog, selected: $shushu)
+            }
+
+            Divider()
+        }
+    }
 
     /// 当前是否有未保存的改动。
     private var isDirty: Bool {
@@ -61,25 +86,11 @@ struct NoteEditorView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("标题", text: $title)
-                .font(.title2).bold()
-                .textFieldStyle(.plain)
-
-            // 案主增删只改本地，点「保存」时才写后端
-            SubjectPicker(client: client, selected: $subjects)
-
-            // 标签（算什么事）：同样只改本地，保存时写后端
-            LabelPicker(client: client, selected: $labels, onLabelDeleted: { labelDeleted($0) })
-
-            // 术数：同样只改本地，保存时写后端；插入排盘会自动勾上对应的术数
-            ShushuPicker(catalog: shushuCatalog, selected: $shushu)
-
-            Divider()
-
+        // 正文（网页）铺满整页；标题、案主、标签、术数盖在网页顶上留出的空白上，
+        // 页面往下滚时跟着一起往上滚走，只剩网页里的工具栏停在最上面；往上滚再一点点露出来。
+        ZStack(alignment: .top) {
             if let noteId {
                 NoteEditorWebView(controller: editor)
-                    .padding(.horizontal, -20)                  // 网页自己留了左右边距
                     .sheet(isPresented: $showInsertChart) {
                         ChartInsertSheet(client: client, noteId: noteId, subjects: subjects) { id, type in
                             editor.insertChart(id: id)
@@ -89,15 +100,29 @@ struct NoteEditorView: View {
                     .sheet(item: $openChart) { c in        // 只有非 macOS 会用到（macOS 开独立窗口）
                         ChartDetailView(client: client, chartId: c.id)
                     }
-            } else if loaded {
-                Text("笔记创建失败").foregroundStyle(.red)
-                Spacer()
             } else {
-                Spacer()
+                VStack {
+                    Spacer().frame(height: headerHeight)
+                    if loaded { Text("笔记创建失败").foregroundStyle(.red) }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             }
+
+            header
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+                .padding(.bottom, 12)
+                .frame(maxWidth: 800)                      // 和网页正文一样最多 760（+ 左右边距）、居中
+                .frame(maxWidth: .infinity)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                    headerHeight = h
+                    editor.setTopInset(h)                  // 网页顶上留出同样高的空白
+                }
+                // 网页滚了多少，这块就往上挪多少（最多挪到完全看不见）→ 看起来是一起滚
+                .offset(y: -min(scrollY, headerHeight))
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
+        .clipped()                                         // 往上挪出去的部分不要盖到窗口工具栏
         .background(PatternBackground())
         .navigationTitle(isNew ? "新建笔记" : "编辑笔记")
         .navigationBarBackButtonHidden(true)                 // 换成自定义返回，便于拦截
@@ -108,11 +133,19 @@ struct NoteEditorView: View {
                 }
             }
             ToolbarItemGroup(placement: .confirmationAction) {
+                Button("删除") { confirmTrash = true }
+                    .disabled(noteId == nil)
                 Button("插入排盘") { requestInsertChart() }
                     .disabled(noteId == nil)
                 Button("保存") { save() }
                     .disabled(noteId == nil || !isDirty)
             }
+        }
+        .alert("把这篇笔记移到回收站？", isPresented: $confirmTrash) {
+            Button("移到回收站", role: .destructive) { moveToTrash() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("可以在回收站里恢复。还没保存的修改不会保留。")
         }
         .alert("请先选择插入位置", isPresented: $showPickPosition) {
             Button("好") {}
@@ -162,6 +195,7 @@ struct NoteEditorView: View {
         editor.wuxingColor = chartWuxingColor
         editor.onChange = { bodyChanged = true }
         editor.onLabelDeleted = { labelDeleted($0, fromEditor: true) }
+        editor.onScroll = { scrollY = $0 }
         editor.onOpenChart = { id in
             #if os(macOS)
             openWindow(id: "chart", value: id)    // 独立窗口：可以边看排盘边写笔记
@@ -194,6 +228,14 @@ struct NoteEditorView: View {
         Task {
             if await editor.cursorInBody() { showInsertChart = true } else { showPickPosition = true }
         }
+    }
+
+    /// 移到回收站，然后离开编辑器（没保存的修改丢弃）。新建、从没保存过的笔记直接彻底删掉（见 finish）。
+    private func moveToTrash() {
+        guard let id = noteId else { return }
+        if !(createdHere && !saved) { client.noteTrash(id: id) }
+        onSaved()
+        dismiss()
     }
 
     /// 返回：有未保存改动就弹提示，否则直接走。
@@ -238,13 +280,79 @@ struct NoteEditorView: View {
     }
 }
 
-/// 笔记用了哪些术数：已选胶囊（悬浮出现小叉去掉）+「＋ 术数」下拉菜单（只列还没选的）。
-/// 这一行固定高度，正文位置不会跳。
+/// 标签行 / 术数行的共同排版：左边固定一个「＋」按钮，右边是已选胶囊（新加的排在最后），
+/// 放不下时右边这段可以左右滑动。不留滚动条的位置，两行才能挨在一起。
+private struct ChipRow<Add: View, Chips: View>: View {
+    @ViewBuilder var add: () -> Add
+    @ViewBuilder var chips: () -> Chips
+
+    static var height: CGFloat { 32 }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            add()
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) { chips() }
+                    .padding(.top, 6).padding(.trailing, 8)       // 给胶囊右上角的小叉留空间
+            }
+        }
+        .frame(height: Self.height)
+    }
+}
+
+/// 「＋ 标签」「＋ 术数」按钮的样子：虚线胶囊。
+private struct AddChipLabel: View {
+    let title: String
+    var body: some View {
+        Label(title, systemImage: "plus")
+            .font(.subheadline)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(Capsule().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+            .foregroundStyle(.secondary)
+            .fixedSize()
+            .padding(.top, 6)                                     // 和右边胶囊对齐（胶囊上方给小叉留了 6）
+    }
+}
+
+/// 可去掉的胶囊：悬浮时右上角出现小叉。
+private struct RemovableChip: View {
+    let text: String
+    var help: String? = nil
+    let fill: Color
+    let foreground: Color
+    var onRemove: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Text(text)
+            .font(.subheadline)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 120)                                 // 太长 → 后面省略号
+            .help(help ?? text)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(Capsule().fill(fill))
+            .foregroundStyle(foreground)
+            .overlay(alignment: .topTrailing) {
+                if hovered {
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.white, .gray)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 6, y: -6)
+                }
+            }
+            .onHover { hovered = $0 }
+    }
+}
+
+/// 笔记用了哪些术数：左边「＋ 术数」下拉菜单（只列还没选的），右边已选胶囊（悬浮出现小叉去掉）。
 struct ShushuPicker: View {
     let catalog: [Shushu]
     @Binding var selected: [Shushu]
-
-    @State private var hovered: String?
 
     private var remaining: [Shushu] {
         let have = Set(selected.map(\.code))
@@ -252,124 +360,68 @@ struct ShushuPicker: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(selected) { s in
-                    Text(s.name)
-                        .font(.subheadline)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                        .overlay(alignment: .topTrailing) {
-                            if hovered == s.code {
-                                Button { selected.removeAll { $0.code == s.code } } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.callout)
-                                        .foregroundStyle(.white, .gray)
-                                }
-                                .buttonStyle(.plain)
-                                .offset(x: 6, y: -6)
-                            }
-                        }
-                        .onHover { inside in
-                            if inside { hovered = s.code } else if hovered == s.code { hovered = nil }
-                        }
-                }
-
-                if !remaining.isEmpty {
-                    Menu {
-                        ForEach(remaining) { s in
-                            Button(s.name) {
-                                let picked = Set(selected.map(\.code)).union([s.code])
-                                selected = catalog.filter { picked.contains($0.code) }   // 按清单顺序
-                            }
-                        }
-                    } label: {
-                        Label("术数", systemImage: "plus")
-                            .font(.subheadline)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(Capsule().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
-                            .foregroundStyle(.secondary)
+        ChipRow {
+            Menu {
+                ForEach(remaining) { s in
+                    Button(s.name) {
+                        let picked = Set(selected.map(\.code)).union([s.code])
+                        selected = catalog.filter { picked.contains($0.code) }   // 按清单顺序
                     }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
+                }
+            } label: {
+                AddChipLabel(title: "术数")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(remaining.isEmpty)
+        } chips: {
+            ForEach(selected) { s in
+                RemovableChip(text: s.name, fill: Color.secondary.opacity(0.15), foreground: .primary) {
+                    selected.removeAll { $0.code == s.code }
                 }
             }
-            .padding(.top, 6).padding(.trailing, 6)          // 给小叉留空间
         }
-        .frame(height: 34)
     }
 }
 
-/// 笔记标签：已选标签胶囊（强调色，同列表右上角的样式）+「＋ 标签」。
-/// 点「＋ 标签」弹出小浮窗搜索 / 新建 / 删除标签，不占正文上方的空间；悬浮胶囊出现小叉去掉。
-/// 这一行固定高度，和案主行一样，正文位置不会跳。
+/// 笔记标签：左边「＋ 标签」（弹出小浮窗搜索 / 新建 / 删除标签），右边已选标签胶囊（强调色，新加的排在最后）；
+/// 悬浮胶囊出现小叉去掉。
 struct LabelPicker: View {
     let client: DivinationClient
     @Binding var selected: [NoteLabel]
     var onLabelDeleted: (Int) -> Void = { _ in }    // 标签被彻底删除（通知外面同步）
 
-    @State private var hovered: Int?
     @State private var showAdd = false
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(selected) { l in
-                    Text(l.name)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 120)                    // 太长 → 后面省略号
-                        .help(l.name)                            // 悬停看全名
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                        .foregroundStyle(Color.accentColor)
-                        .overlay(alignment: .topTrailing) {
-                            if hovered == l.id {
-                                Button { selected.removeAll { $0.id == l.id } } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.callout)
-                                        .foregroundStyle(.white, .gray)
-                                }
-                                .buttonStyle(.plain)
-                                .offset(x: 6, y: -6)
-                            }
-                        }
-                        .onHover { inside in
-                            if inside { hovered = l.id } else if hovered == l.id { hovered = nil }
-                        }
-                }
-
-                Button { showAdd = true } label: {
-                    Label("标签", systemImage: "plus")
-                        .font(.subheadline)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Capsule().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showAdd, arrowEdge: .bottom) {
-                    LabelSearchPopover(
-                        client: client,
-                        excludedIDs: Set(selected.map(\.id)),
-                        onPick: { l in
-                            if !selected.contains(where: { $0.id == l.id }) { selected.append(l) }   // 加在最后
-                            showAdd = false
-                        },
-                        onDeleted: { id in
-                            selected.removeAll { $0.id == id }
-                            onLabelDeleted(id)
-                        }
-                    )
+        ChipRow {
+            Button { showAdd = true } label: {
+                AddChipLabel(title: "标签")
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showAdd, arrowEdge: .bottom) {
+                LabelSearchPopover(
+                    client: client,
+                    excludedIDs: Set(selected.map(\.id)),
+                    onPick: { l in
+                        if !selected.contains(where: { $0.id == l.id }) { selected.append(l) }   // 加在最后
+                        showAdd = false
+                    },
+                    onDeleted: { id in
+                        selected.removeAll { $0.id == id }
+                        onLabelDeleted(id)
+                    }
+                )
+            }
+        } chips: {
+            ForEach(selected) { l in
+                RemovableChip(text: l.name, fill: Color.accentColor.opacity(0.15), foreground: .accentColor) {
+                    selected.removeAll { $0.id == l.id }
                 }
             }
-            .padding(.top, 6).padding(.trailing, 6)          // 给小叉留空间
-            .padding(.bottom, 10)                            // 给横向滚动条留位置，不压住胶囊
         }
-        .scrollIndicators(.visible)                          // 标签多了：一直显示滚动条
-        .frame(height: 44)
     }
 }
 

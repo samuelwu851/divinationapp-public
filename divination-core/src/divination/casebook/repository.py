@@ -23,15 +23,21 @@ def insert_note(title: str, body: str, body_text: str) -> int:
     return cur.lastrowid
 
 
-def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=()) -> list[dict]:
+def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=(), trashed: bool = False,
+               chart_blocks: list | None = None) -> list[dict]:
     """列出笔记，可按四类条件筛选（都可省）。所有条件「同时满足」才出现——
     包括同一类里选了多个：选了「疾病」「感情」两个标签，就要两个标签都有。
     - keyword：标题或正文（纯文字 body_text）里包含这个词
     - label_ids：每个标签都要有（笔记本身有，或者笔记里任意一个排盘有，都算）
     - subject_ids：每个案主都要关联
     - shushu_codes：每个术数都要标了（note_types）
+    - trashed：False = 正常的笔记（不含回收站里的）；True = 只列回收站里的
+    - chart_blocks：按排盘搜的条件块 [{"type": "bazi", "fields": {"year_gan": "丙"}}, ...]。
+      这里只做粗筛：每一块都要有某张排盘满足（同一张排盘满足这一块的所有字段）；
+      「几块要分别由不同的排盘满足」由 service 再精筛（SQL 不好写）。
     """
-    where, args = [], []
+    where = ["n.deleted_at IS NOT NULL" if trashed else "n.deleted_at IS NULL"]
+    args = []
     if keyword:
         # instr 是「包含」，不像 LIKE 要处理 % 和 _ 这些特殊字符。
         # 两边都先 lower() 再比 → 英文不区分大小写（搜 c 也能找到 C）。
@@ -49,14 +55,24 @@ def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=())
     for code in shushu_codes:
         where.append("EXISTS (SELECT 1 FROM note_types nt WHERE nt.note_id = n.id AND nt.type = ?)")
         args.append(code)
+    for block in chart_blocks or []:
+        fields = block["fields"]
+        conds = "".join(
+            " AND EXISTS (SELECT 1 FROM chart_facts f WHERE f.chart_id = c.id AND f.key = ? AND f.value = ?)"
+            for _ in fields
+        )
+        where.append(f"EXISTS (SELECT 1 FROM charts c WHERE c.note_id = n.id AND c.type = ?{conds})")
+        args.append(block["type"])
+        for k, v in fields.items():
+            args += [k, v]
     # 预览取纯文字 body_text 的前 40 字，换行替换成空格（char(10) 就是换行符）
     rows = db.get().execute(
         f"""
         SELECT n.id, n.title, replace(substr(n.body_text, 1, 40), char(10), ' ') AS preview,
-        n.created_at, n.updated_at
+        n.created_at, n.updated_at, n.deleted_at
         FROM notes n
-        {"WHERE " + " AND ".join(where) if where else ""}
-        ORDER BY n.updated_at DESC, n.id DESC
+        WHERE {" AND ".join(where)}
+        ORDER BY {"n.deleted_at DESC, " if trashed else ""}n.updated_at DESC, n.id DESC
         """,
         args,
     ).fetchall()
@@ -72,6 +88,16 @@ def update_note(note_id: int, title: str, body: str, body_text: str) -> int:
         (title, body, body_text, note_id),
     )
     return cur.rowcount
+
+def set_note_trashed(note_id: int, trashed: bool) -> int:
+    """放进回收站（记下时间）/ 从回收站恢复。笔记本身、排盘、图片都不动。"""
+    return db.get().execute(
+        "UPDATE notes SET deleted_at = CASE WHEN ? THEN datetime('now') ELSE NULL END WHERE id = ?",
+        (1 if trashed else 0, note_id),
+    ).rowcount
+
+def list_trashed_note_ids() -> list[int]:
+    return [r["id"] for r in db.get().execute("SELECT id FROM notes WHERE deleted_at IS NOT NULL").fetchall()]
 
 def delete_note(note_id: int) -> int:
     cur = db.get().execute("DELETE FROM notes WHERE id = ?", (note_id,))
@@ -107,7 +133,8 @@ def list_subjects() -> list[dict]:
     rows = db.get().execute(
         """
         SELECT s.id, s.name, s.remark, s.birthday, s.birthtime, s.gender, s.created_at, s.updated_at,
-               (SELECT COUNT(*) FROM notes_subjects ns WHERE ns.subject_id = s.id) AS note_count
+               (SELECT COUNT(*) FROM notes_subjects ns JOIN notes n ON n.id = ns.note_id
+                 WHERE ns.subject_id = s.id AND n.deleted_at IS NULL) AS note_count   -- 回收站里的不算
         FROM subjects s
         ORDER BY s.updated_at DESC, s.id DESC
         """
@@ -323,6 +350,48 @@ def unlink_chart_label(chart_id: int, label_id: int) -> int:
     return db.get().execute(
         "DELETE FROM chart_labels WHERE chart_id = ? AND label_id = ?", (chart_id, label_id)
     ).rowcount
+
+
+# ---------- 排盘的可搜索特征（chart_facts） ----------
+
+def insert_chart_facts(chart_id: int, chart_type: str, facts: list[tuple[str, str]]) -> None:
+    db.get().executemany(
+        "INSERT OR IGNORE INTO chart_facts(chart_id, type, key, value) VALUES (?, ?, ?, ?)",
+        [(chart_id, chart_type, k, v) for k, v in facts],
+    )
+
+def charts_needing_facts(types: list[str], version_key: str, version: str) -> list[dict]:
+    """特征没拆过、或者是旧版本拆的排盘：给 backfill 用。"""
+    if not types:
+        return []
+    marks = ",".join("?" * len(types))
+    rows = db.get().execute(
+        f"""
+        SELECT c.id, c.type, c.snapshot_json FROM charts c
+        WHERE c.type IN ({marks})
+          AND NOT EXISTS (SELECT 1 FROM chart_facts f WHERE f.chart_id = c.id AND f.key = ? AND f.value = ?)
+        """,
+        [*types, version_key, version],
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+def delete_chart_facts(chart_id: int) -> None:
+    db.get().execute("DELETE FROM chart_facts WHERE chart_id = ?", (chart_id,))
+
+def chart_facts_of_notes(note_ids: list[int], types: list[str]) -> list[dict]:
+    """这些笔记里、这些类型的排盘的全部特征：[{note_id, chart_id, type, key, value}]（精筛用）。"""
+    if not note_ids or not types:
+        return []
+    n_marks, t_marks = ",".join("?" * len(note_ids)), ",".join("?" * len(types))
+    rows = db.get().execute(
+        f"""
+        SELECT c.note_id, c.id AS chart_id, c.type, f.key, f.value
+        FROM charts c LEFT JOIN chart_facts f ON f.chart_id = c.id
+        WHERE c.note_id IN ({n_marks}) AND c.type IN ({t_marks})
+        """,
+        [*note_ids, *types],
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------- 笔记用了哪些术数（note_types） ----------

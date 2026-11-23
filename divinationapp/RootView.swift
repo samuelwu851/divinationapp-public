@@ -115,22 +115,18 @@ struct IChingHomeView: View {
 
 #if os(macOS)
 /// 禁用窗口状态恢复，并在启动时把窗口设回默认大小（之后用户仍可自由缩放）。
-private struct WindowConfigurator: NSViewRepresentable {
+private struct WindowConfigurator: View {
     let width: CGFloat
     let height: CGFloat
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            guard let window = view.window else { return }
+    var body: some View {
+        // 进了窗口的那一刻才设置（见 WindowReader：原来的 async 写法在 Release 版常常拿不到窗口）
+        WindowReader { window in
             window.isRestorable = false                                  // 不保存/恢复窗口状态
             window.setContentSize(NSSize(width: width, height: height))  // 每次启动设回默认大小
             window.center()
             CasebookWindowManager.shared.registerMain(window)            // 供笔记窗跟随
         }
-        return view
     }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 #endif

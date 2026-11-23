@@ -28,6 +28,7 @@ struct divinationappApp: App {
             NotesWindowView()
         }
         .defaultSize(width: 518, height: 780)
+        .windowResizability(.contentMinSize)        // 窗口最小尺寸跟内容走（笔记窗最窄 518，见 NotesWindowView.minWidth）
 
         // 笔记里点开的排盘：普通窗口（不挡住笔记，可拖动、缩放）。
         // 按排盘 id 区分：同一个排盘再点一次只会把已开的窗口提到前面。
