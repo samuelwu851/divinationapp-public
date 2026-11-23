@@ -76,7 +76,9 @@ def _match_chart_blocks(notes: list[dict], blocks: list[dict]) -> list[dict]:
 def backfill_chart_facts() -> int:
     """给还没拆过、或者是旧版本拆的排盘重拆特征（老数据 / 新加了可搜索的术数或字段）。
     打开案例库时调用；返回重拆了几个。"""
-    rows = repo.charts_needing_facts(list(chart_facts.REGISTRY), chart_facts.VERSION_KEY, chart_facts.FACTS_VERSION)
+    rows = []
+    for t in chart_facts.REGISTRY:                       # 每种术数对照它自己的版本号
+        rows += repo.charts_needing_facts([t], chart_facts.VERSION_KEY, chart_facts.version_for(t))
     with db.get():
         for r in rows:
             repo.delete_chart_facts(r["id"])

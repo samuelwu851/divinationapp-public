@@ -234,3 +234,37 @@ def test_backfill_old_charts(tmp_path):
     con.commit(); con.close()
     call("casebook_open", path=str(path))
     assert ids(chart_query=_q(("bazi", {"gender": "male"}))) == [n["id"]]
+
+
+def test_per_type_facts_version_and_number_field(tmp_path):
+    """插件术数自己的特征版本：版本变了只重拆它；number 字段：空着不限、数字统一写法。"""
+    from divination.casebook import chart_facts as cf
+    calls = []
+
+    def fake_extract(snap):
+        calls.append(1)
+        return [("year", str(snap["y"]))]
+
+    cf.register_many({"_fakeplug": {"extract": fake_extract, "version": "1",
+                                    "form": {"title": "测试", "columns": 1,
+                                             "fields": [cf.number_field("year", "年", 1, 2200)]}}})
+    from divination.casebook import charts
+    charts.register_builders({"_fakeplug": lambda p: ("", {"y": p["y"]})})
+    try:
+        assert cf.version_for("_fakeplug") == cf.FACTS_VERSION + "+1" and cf.version_for("bazi") == cf.FACTS_VERSION
+        path = tmp_path / "v.db"
+        call("casebook_open", path=str(path))
+        n = call("note_create", title="x")
+        call("chart_create", note_id=n["id"], type="_fakeplug", params={"y": 1990})
+        q = lambda v: ids(chart_query=[{"type": "_fakeplug", "fields": {"year": v}}])
+        assert q("1990") == [n["id"]] and q(" 01990 ") == [n["id"]] and q("1991") == []
+        assert q("") == [n["id"]] and q("abc") == [n["id"]]                    # 空 / 填错 = 不限
+        calls.clear()
+        call("casebook_open", path=str(path)); assert calls == []               # 版本没变：不重拆
+        cf.REGISTRY["_fakeplug"]["version"] = "2"
+        call("casebook_open", path=str(path)); assert calls == [1]              # 只重拆这一种
+        form = [f for f in call("chart_search_forms")["forms"] if f["type"] == "_fakeplug"][0]
+        assert form["fields"][0] == {"key": "year", "label": "年", "style": "number", "options": [], "min": 1, "max": 2200}
+    finally:
+        cf.REGISTRY.pop("_fakeplug", None)
+        charts.BUILDERS.pop("_fakeplug", None)

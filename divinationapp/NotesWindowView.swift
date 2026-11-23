@@ -596,6 +596,50 @@ struct ChartSearchPanel: View {
     }
 }
 
+/// 填整数的条件（如年份：选项太多放不进下拉框）。空着 = 不限；回车或点别处生效，超出范围收到边界。
+private struct NumberCondition: View {
+    let field: ChartSearchForm.Field
+    @Binding var value: String?
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(field.label).font(.caption).foregroundStyle(.secondary)
+            TextField("不限", text: $text)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 6).fill(YearWheel.fieldFill))      // 同年份输入框的柔和灰白
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(YearWheel.fieldStroke, lineWidth: 1))
+                .focused($focused)
+                .onSubmit(commit)
+                .onChange(of: focused) { _, now in if !now { commit() } }
+                .help(rangeHelp)
+        }
+        .onAppear { text = value ?? "" }
+    }
+
+    private var rangeHelp: String {
+        switch (field.min, field.max) {
+        case let (lo?, hi?): return "填 \(lo)–\(hi) 的整数；空着 = 不限"
+        default: return "填整数；空着 = 不限"
+        }
+    }
+
+    private func commit() {
+        guard let n = Int(text.filter { $0.isNumber || $0 == "-" }) else {
+            value = nil; text = ""; return                       // 空着或填错 = 不限
+        }
+        var v = n
+        if let lo = field.min { v = Swift.max(v, lo) }
+        if let hi = field.max { v = Swift.min(v, hi) }
+        value = String(v)
+        text = String(v)
+    }
+}
+
 /// 一个条件块：标题 + 右上角 ×；勾选类字段（性别、有没有变卦）一行，下拉类字段排成网格。
 private struct BlockCard: View {
     let form: ChartSearchForm
@@ -608,7 +652,13 @@ private struct BlockCard: View {
             ForEach(form.fields.filter(\.isChecks)) { field in checks(field) }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: max(1, form.columns)),
                       alignment: .leading, spacing: 8) {
-                ForEach(form.fields.filter { !$0.isChecks }) { field in menu(field) }
+                ForEach(form.fields.filter { !$0.isChecks }) { field in
+                    if field.isNumber {
+                        NumberCondition(field: field, value: $block.fields[field.key])
+                    } else {
+                        menu(field)
+                    }
+                }
             }
         }
         .padding(10)

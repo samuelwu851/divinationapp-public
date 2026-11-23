@@ -63,10 +63,13 @@ struct ChartSearchForm: Codable, Identifiable {
     struct Field: Codable, Identifiable {
         let key: String
         let label: String
-        var style: String? = nil          // "menu" 下拉框 / "checks" 互斥勾选框（男 / 女、有变卦 / 没变卦）
+        var style: String? = nil          // "menu" 下拉框 / "checks" 互斥勾选框（男 / 女、有变卦 / 没变卦）/ "number" 填整数（如年份）
         let options: [Option]
+        var min: Int? = nil               // number 字段的范围（可没有）
+        var max: Int? = nil
         var id: String { key }
         var isChecks: Bool { style == "checks" }
+        var isNumber: Bool { style == "number" }
     }
     let type: String
     let title: String

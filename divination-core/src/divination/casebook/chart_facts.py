@@ -2,18 +2,20 @@
 
 每种术数两样东西：
 - 拆特征的函数：快照 → [(key, value), ...]，如八字 ("year_gan", "丙")、("hour_zhi", "戌")、("gender", "male")；
-- 搜索表单：前端照着画。字段有两种样子（style）：
-    "menu"  下拉框：选一个值或「不限」
+- 搜索表单：前端照着画。字段有三种样子（style）：
+    "menu"   下拉框：选一个值或「不限」
     "checks" 几个互斥的勾选框（如 男 / 女、有变卦 / 没变卦）：勾一个 = 只要这种，都不勾 = 不限
+    "number" 直接填整数（如年份，选项太多放不进下拉框）：空着 = 不限；可带 min / max
 
 搜索条件是一串「条件块」：[{"type": "bazi", "fields": {"year_gan": "丙"}}, {"type": "bazi", "fields": {...}}, ...]
 笔记要有**不同的**排盘分别满足每一块（加了两个八字块，就要有两张八字各自满足），见 service.list_notes。
 
 特征可以随时从快照重建：每个排盘的特征里带一个版本号（_v），版本变了（比如加了新特征）打开案例库时
 service.backfill_chart_facts 会自动重拆，老数据也能按新特征搜。
+版本号按术数分开算（见 version_for）：某种术数加了特征，只重拆这一种的排盘。
 
 插件也能加自己的术数：在插件模块里导出
-    CHART_FACTS = {"类型": {"extract": 函数, "form": 表单}}
+    CHART_FACTS = {"类型": {"extract": 函数, "form": 表单, "version": "1"（可省；改了特征就加一）}}
 api 扫描插件时调 register_many 合并进来（同 CHART_BUILDERS 的做法）。
 """
 from divination.iching import core as iching_core
@@ -45,6 +47,16 @@ def _menu(key: str, label: str, options: list[dict]) -> dict:
 
 def _checks(key: str, label: str, options: list[dict]) -> dict:
     return {"key": key, "label": label, "style": "checks", "options": options}
+
+
+def number_field(key: str, label: str, lo: int | None = None, hi: int | None = None) -> dict:
+    """直接填整数的字段（插件也可以用）。"""
+    f = {"key": key, "label": label, "style": "number", "options": []}
+    if lo is not None:
+        f["min"] = lo
+    if hi is not None:
+        f["max"] = hi
+    return f
 
 
 # ---------- 八字：性别 + 八个字 ----------
@@ -124,13 +136,20 @@ def register_many(items: dict) -> None:
         REGISTRY[chart_type] = spec
 
 
+def version_for(chart_type: str) -> str:
+    """某种术数的特征版本：总版本 FACTS_VERSION，加上这种术数自己的 version（有的话）。
+    内置的术数不写 version，版本就是 FACTS_VERSION；插件写了，就是「2+1」这种，改了只重拆它自己的。"""
+    v = REGISTRY.get(chart_type, {}).get("version")
+    return f"{FACTS_VERSION}+{v}" if v else FACTS_VERSION
+
+
 def extract(chart_type: str, snapshot: dict) -> list[tuple[str, str]]:
     """拆特征（最后带上版本号）；这种排盘不支持搜索、或快照格式不对，返回空。"""
     spec = REGISTRY.get(chart_type)
     if spec is None:
         return []
     try:
-        return spec["extract"](snapshot) + [(VERSION_KEY, FACTS_VERSION)]
+        return spec["extract"](snapshot) + [(VERSION_KEY, version_for(chart_type))]
     except (KeyError, TypeError, ValueError, IndexError, AttributeError):
         return []                  # 快照格式不认识：不让它影响存排盘，只是搜不到
 
@@ -149,9 +168,18 @@ def clean_query(blocks) -> list[dict]:
         spec = REGISTRY.get(b.get("type"))
         if spec is None:
             continue
-        allowed = {f["key"] for f in spec["form"]["fields"]}
+        allowed = {f["key"]: f for f in spec["form"]["fields"]}
         fields = b.get("fields") or {}
-        kept = {k: str(v) for k, v in fields.items() if k in allowed and v not in (None, "")}
+        kept = {}
+        for k, v in fields.items():
+            if k not in allowed or v in (None, ""):
+                continue
+            if allowed[k].get("style") == "number":      # 数字统一成整数写法（"01990" → "1990"），填错的忽略
+                try:
+                    v = int(str(v).strip())
+                except ValueError:
+                    continue
+            kept[k] = str(v)
         out.append({"type": b["type"], "fields": kept})
     return out
 
