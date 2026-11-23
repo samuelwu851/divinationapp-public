@@ -123,6 +123,19 @@
   .cl-new { color: var(--accent); }
   .cc-head { font-size: 13px; color: var(--secondary); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cc-head b { color: var(--fg); font-weight: 600; }
+  /* 卡片外面、下方：所问之事在上、特点在下。
+     外层 width:0 + min-width:100% → 不参与撑宽（卡片照样居中，右边的标签也还贴着卡片）；
+     里层可以比卡片宽：至少 360（一行约 24 个字），卡片更宽就跟卡片一样宽，最宽不超过正文；
+     用 left:50% + translateX(-50%) 和卡片对齐居中，多出来的部分往两边伸出去 */
+  .chart-below { width: 0; min-width: 100%; }
+  .chart-below-inner { position: relative; left: 50%; transform: translateX(-50%);
+    width: min(max(100%, 360px), calc(100vw - 48px)); }
+  .cc-question { margin-top: 6px; padding: 0 4px; font-size: 14px; color: var(--fg); line-height: 1.45;
+    white-space: normal; overflow-wrap: anywhere; }
+  .cc-tags { display: flex; gap: 4px; margin-top: 4px; padding: 0 4px; overflow-x: auto; scrollbar-width: none; }
+  .cc-tags::-webkit-scrollbar { display: none; }
+  .cc-tag { flex: none; font-size: 12px; padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+    background: color-mix(in srgb, var(--secondary) 18%, transparent); color: var(--fg); }
   .cc-del { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; border-radius: 50%; border: 0; padding: 0;
     background: #8e8e93; color: #fff; font-size: 13px; line-height: 20px; text-align: center; display: none; cursor: default; }
   .chart-card:hover .cc-del { display: block; }
@@ -154,6 +167,16 @@
   /* ---------- 图片（拖右下角圆点调大小） ---------- */
   /* 正文最多 760 宽、居中：窗口很宽时一行字不会太长（工具栏跟着对齐） */
   #editor, .toolbar { max-width: 760px; margin-left: auto; margin-right: auto; }
+  /* 查找：工具栏里的第二行；命中的字用 CSS 高亮（Custom Highlight API，不改动正文） */
+  .find-bar { flex-basis: 100%; display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+  .find-bar[hidden] { display: none; }
+  .find-bar input { flex: 1; min-width: 0; font: 14px -apple-system, "PingFang SC", sans-serif; padding: 4px 8px;
+    border-radius: 6px; border: 1px solid var(--stroke); background: #eeebe5; color: var(--fg); outline: none; }
+  .find-bar input:focus { border-color: var(--accent); }
+  .find-count { font-size: 12px; color: var(--secondary); min-width: 44px; text-align: center; }
+  .find-bar button { font-size: 14px; padding: 2px 8px; }
+  ::highlight(find-hit) { background-color: rgba(255, 214, 10, 0.45); }
+  ::highlight(find-current) { background-color: rgba(255, 149, 0, 0.75); }
   /* 图片：宽度是像素（窗口变宽不跟着放大）；窗口比图窄时缩到放得下；不超过原图像素宽度（JS 里设 max-width） */
   .img-box { position: relative; display: block; max-width: 100%; margin: 4px 0; line-height: 0; }
   .img-box[data-align="center"] { margin-left: auto; margin-right: auto; }
@@ -228,6 +251,14 @@
       <option value="deleteTable">删除整个表格</option>
     </select>
     <button id="image-btn" title="插入图片（也可以直接拖入或粘贴）">图片</button>
+    <!-- 查找（⌘F / Ctrl+F）：工具栏下面多一行，跟着工具栏停在顶上 -->
+    <div class="find-bar" id="find-bar" hidden>
+      <input id="find-input" type="text" placeholder="在笔记里查找" autocomplete="off" spellcheck="false">
+      <span id="find-count" class="find-count"></span>
+      <button id="find-prev" title="上一个（⇧↩）">↑</button>
+      <button id="find-next" title="下一个（↩）">↓</button>
+      <button id="find-close" title="关闭（Esc）">×</button>
+    </div>
   </div>
   <div id="editor"></div>
   <input type="file" id="file-input" accept="image/*" multiple hidden>

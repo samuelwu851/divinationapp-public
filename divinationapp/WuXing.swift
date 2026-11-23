@@ -56,6 +56,32 @@ struct BaziPillarsView: View {
     }
 }
 
+/// 四柱 + 藏干 + 纳音（梅花易数等用：不要十神、大运流年那些）。
+/// 每柱：天干、地支（大字，五行上色），下面一行藏干（小字，五行上色），再下面纳音（和藏干一样大，黑色）。
+struct BaziPillarsDetailView: View {
+    let pillars: BaziPillars
+    var charFont: Font = .largeTitle
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            ForEach(Array([pillars.year, pillars.month, pillars.day, pillars.hour].enumerated()), id: \.offset) { _, p in
+                let chars = Array(p.ganzhi)
+                VStack(spacing: 3) {
+                    if chars.count >= 1 { GanZhiChar(c: chars[0]).font(charFont) }
+                    if chars.count >= 2 { GanZhiChar(c: chars[1]).font(charFont) }
+                    HStack(spacing: 2) {                                // 藏干
+                        ForEach(Array(p.canggan.enumerated()), id: \.offset) { _, g in
+                            if let c = g.gan.first { GanZhiChar(c: c).font(.callout) }
+                        }
+                    }
+                    Text(p.nayin).font(.callout).foregroundStyle(.primary)      // 纳音：和藏干一样大，黑色
+                }
+                .help("藏干：\(p.canggan.map(\.gan).joined(separator: "、"))　纳音：\(p.nayin)")
+            }
+        }
+    }
+}
+
 // MARK: - 卦的五行颜色（易经速查 / 梅花易数「五行颜色」开关）
 
 /// 卦爻的五行颜色：传统五色（木青、火赤、土黄、金白、水黑），但都调柔和，避免满屏鲜艳看花眼。

@@ -34,11 +34,16 @@ struct ChartInsertSheet: View {
     @State private var original: Hexagram?
     @State private var changed: Hexagram?
 
-    // 梅花易数（时间起卦）
+    // 梅花易数（时间 / 数字 / 指定起卦）
     @State private var moment = DateInputModel(years: 1950...2060, initial: .now())
+    @State private var meihuaInput = MeihuaInput()
+    @State private var meihuaTimeSource: TimeSource = .solar
+    @State private var meihuaPicked: DateParts?       // 四柱反推选中的时刻
 
     // 注册表里的类型：表单交出来的参数
     @State private var pluginParams: [String: Any]?
+
+    @State private var question = ""                 // 所问之事（各种排盘都可以填，可不填）
 
     var body: some View {
         VStack(spacing: 20) {
@@ -48,6 +53,12 @@ struct ChartInsertSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: 120 * CGFloat(tabs.count))
+
+            TextField("所问之事（可不填）", text: $question)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.12)))
+                .frame(maxWidth: 420)
 
             ScrollView {
                 Group {
@@ -216,11 +227,33 @@ struct ChartInsertSheet: View {
 
     private var meihuaForm: some View {
         VStack(spacing: 16) {
-            CalendarModeSwitch(model: moment)
-            DateInputWheels(model: moment)
-            HStack(spacing: 16) {
-                Text("地点：北京（默认）").foregroundStyle(.secondary)
-                Button("现在") { moment.setSolar(.now()) }
+            Picker("", selection: $meihuaInput.method) {
+                ForEach(MeihuaMethod.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 320)
+            if meihuaInput.method != .time {
+                MeihuaManualInput(input: $meihuaInput)
+            }
+            Text(meihuaInput.method == .time ? "起卦时间" : "时间（只用来排八字）")
+                .font(.callout).foregroundStyle(.secondary)
+            TimeSourceSwitch(source: $meihuaTimeSource, date: moment)
+            if meihuaTimeSource == .pillars {
+                PillarsReverseInput(client: client, pickTitle: "点一个作为时间：") { t in
+                    meihuaPicked = t
+                    moment.setSolar(t)
+                }
+                if let t = meihuaPicked {
+                    Text(String(format: "已选：%04d-%02d-%02d %02d:%02d", t.year, t.month, t.day, t.hour, t.minute))
+                        .font(.callout)
+                }
+            } else {
+                DateInputWheels(model: moment)
+                HStack(spacing: 16) {
+                    Text("地点：北京（默认）").foregroundStyle(.secondary)
+                    Button("现在") { moment.setSolar(.now()) }
+                }
             }
         }
     }
@@ -235,17 +268,18 @@ struct ChartInsertSheet: View {
             var p = b.params
             p["name"] = name.trimmingCharacters(in: .whitespaces)
             p["is_male"] = isMale
-            id = client.chartCreate(noteId: noteId, type: "bazi", params: p)
+            id = client.chartCreate(noteId: noteId, type: "bazi", params: p, question: question)
         case "iching":
             guard let org = original, let chg = changed else { return }
             id = client.chartCreate(noteId: noteId, type: "iching",
-                                    params: ["org_value": org.value, "chg_value": chg.value])
+                                    params: ["org_value": org.value, "chg_value": chg.value], question: question)
         case "meihua":
-            guard let m = moment.resolvedSolar() else { errorMessage = "农历日期换算失败"; return }
-            id = client.chartCreate(noteId: noteId, type: "meihua", params: m.params)
+            let (p, why) = meihuaInput.params(time: meihuaTimeSource == .pillars ? meihuaPicked : moment.resolvedSolar())
+            guard let params = p else { errorMessage = why; return }
+            id = client.chartCreate(noteId: noteId, type: "meihua", params: params, question: question)
         default:
             guard let p = pluginParams else { errorMessage = "请先把参数填完整"; return }
-            id = client.chartCreate(noteId: noteId, type: kind, params: p)
+            id = client.chartCreate(noteId: noteId, type: kind, params: p, question: question)
         }
         guard let id else { errorMessage = "排盘失败：引擎无响应"; return }
         onInserted(id, kind)

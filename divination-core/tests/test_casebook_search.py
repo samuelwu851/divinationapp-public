@@ -100,7 +100,7 @@ def test_subject_list_get_update_delete(data):
     up = call("subject_update", subject_id=data["zhang"], name=" 张三丰 ", remark="武当")
     assert up["name"] == "张三丰" and up["remark"] == "武当"
     assert "error" in call("subject_update", subject_id=data["zhang"], name="  ")
-    assert call("subject_delete", subject_id=data["zhang"]) == {"ok": True}
+    assert call("subject_delete", subject_id=data["zhang"]) == {"ok": True, "trashed_notes": 0}
     assert ids(subject_ids=[data["zhang"]]) == []
     assert len(call("note_list")["notes"]) == 3                       # 笔记都还在
     assert "error" in call("subject_get", subject_id=data["zhang"])

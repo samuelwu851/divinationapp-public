@@ -21,7 +21,7 @@ struct divinationappApp: App {
             MainView()
         }
         #if os(macOS)
-        .commands { CasebookBackupCommands() }       // 菜单栏「文件 → 备份数据… / 恢复数据…」
+        .commands { CasebookBackupCommands() }       // 菜单栏「数据 → 备份数据… / 恢复数据…」
         #endif
         .defaultSize(width: 625, height: 780)   // 打开时的大小；切换页面不随内容变化
 
@@ -42,6 +42,7 @@ struct divinationappApp: App {
         }
         .defaultSize(width: 760, height: 780)
         .restorationBehavior(.disabled)           // 重启 App 不自动恢复这些窗口
+        .commandsRemoved()                        // 不要在「文件 → 新建」里出现「新建 排盘 窗口」（单独开出来是空白的）
         #endif
     }
 

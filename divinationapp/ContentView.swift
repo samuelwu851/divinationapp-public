@@ -2,16 +2,17 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var store = IChingStore()
+    @Environment(CurrentChart.self) private var current      // 「存进案例库」要存的盘
     @AppStorage("wuxingColorOn") private var wuxingColorOn = false   // 五行颜色（易经速查、梅花易数共用）
 
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
-                // 开关放右上角：五行颜色 + 变卦模式
+                // 开关放左上角：五行颜色 + 变卦模式（右上角留给切换术数的 ⋯）
                 HStack(spacing: 16) {
-                    Spacer()
                     Toggle("五行颜色", isOn: $wuxingColorOn).fixedSize()
                     Toggle("变卦模式", isOn: $store.showChanged).fixedSize()
+                    Spacer()
                 }
 
                 if let org = store.original {
@@ -37,7 +38,17 @@ struct ContentView: View {
             .environment(\.wuxingColorOn, wuxingColorOn)
         }
         .scrollIndicators(.never)           // 不显示竖滚动条 → 拉高时不再左右抖动
-        .onAppear { store.load() }
+        .onAppear { store.load(); updateCurrent() }
+        .onChange(of: store.original?.value) { _, _ in updateCurrent() }
+        .onChange(of: store.changed?.value) { _, _ in updateCurrent() }
+        .onChange(of: store.showChanged) { _, _ in updateCurrent() }
+    }
+
+    /// 现在这个盘（存进案例库用）：本卦；开了变卦模式再加变卦。
+    private func updateCurrent() {
+        guard let org = store.original else { current.spec = nil; return }
+        let chg = store.showChanged ? (store.changed ?? org) : org
+        current.spec = ChartSaveSpec(type: "iching", params: ["org_value": org.value, "chg_value": chg.value])
     }
 }
 

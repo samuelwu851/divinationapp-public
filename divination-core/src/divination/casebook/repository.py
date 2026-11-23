@@ -27,9 +27,9 @@ def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=(),
                chart_blocks: list | None = None) -> list[dict]:
     """列出笔记，可按四类条件筛选（都可省）。所有条件「同时满足」才出现——
     包括同一类里选了多个：选了「疾病」「感情」两个标签，就要两个标签都有。
-    - keyword：标题或正文（纯文字 body_text）里包含这个词
+    - keyword：标题、正文（纯文字 body_text）、笔记里排盘的所问之事、排盘的特点、八字排盘的姓名，任一处包含这个词
     - label_ids：每个标签都要有（笔记本身有，或者笔记里任意一个排盘有，都算）
-    - subject_ids：每个案主都要关联
+    - subject_ids：每个案主都要关联——或者笔记里有一张八字排盘的姓名和这个案主的名字一样（也算）
     - shushu_codes：每个术数都要标了（note_types）
     - trashed：False = 正常的笔记（不含回收站里的）；True = 只列回收站里的
     - chart_blocks：按排盘搜的条件块 [{"type": "bazi", "fields": {"year_gan": "丙"}}, ...]。
@@ -42,16 +42,27 @@ def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=(),
         # instr 是「包含」，不像 LIKE 要处理 % 和 _ 这些特殊字符。
         # 两边都先 lower() 再比 → 英文不区分大小写（搜 c 也能找到 C）。
         # SQLite 自带的 lower() 只转 A–Z，中文等其他字符原样不动，正好合适。
-        where.append("(instr(lower(n.title), lower(?)) > 0 OR instr(lower(n.body_text), lower(?)) > 0)")
-        args += [keyword, keyword]
+        where.append("""(instr(lower(n.title), lower(?)) > 0 OR instr(lower(n.body_text), lower(?)) > 0
+               OR EXISTS (SELECT 1 FROM charts c                       -- 排盘的所问之事
+                          WHERE c.note_id = n.id AND instr(lower(c.title), lower(?)) > 0)
+               OR EXISTS (SELECT 1 FROM charts c                       -- 排盘的特点
+                          JOIN chart_tags ct ON ct.chart_id = c.id JOIN tags t ON t.id = ct.tag_id
+                          WHERE c.note_id = n.id AND instr(lower(t.name), lower(?)) > 0)
+               OR EXISTS (SELECT 1 FROM charts c                       -- 八字排盘的姓名
+                          WHERE c.note_id = n.id AND c.type = 'bazi'
+                            AND instr(lower(json_extract(c.snapshot_json, '$.name')), lower(?)) > 0))""")
+        args += [keyword, keyword, keyword, keyword, keyword]
     for label_id in label_ids:          # 每个标签一条 EXISTS，用 AND 连起来 = 都要有
         where.append("""(EXISTS (SELECT 1 FROM note_labels nl WHERE nl.note_id = n.id AND nl.label_id = ?)
                OR EXISTS (SELECT 1 FROM charts c JOIN chart_labels cl ON cl.chart_id = c.id
                           WHERE c.note_id = n.id AND cl.label_id = ?))""")
         args += [label_id, label_id]
     for subject_id in subject_ids:
-        where.append("EXISTS (SELECT 1 FROM notes_subjects ns WHERE ns.note_id = n.id AND ns.subject_id = ?)")
-        args.append(subject_id)
+        where.append("""(EXISTS (SELECT 1 FROM notes_subjects ns WHERE ns.note_id = n.id AND ns.subject_id = ?)
+               OR EXISTS (SELECT 1 FROM charts c JOIN subjects s ON s.id = ?
+                          WHERE c.note_id = n.id AND c.type = 'bazi' AND s.name <> ''
+                            AND json_extract(c.snapshot_json, '$.name') = s.name))""")
+        args += [subject_id, subject_id]
     for code in shushu_codes:
         where.append("EXISTS (SELECT 1 FROM note_types nt WHERE nt.note_id = n.id AND nt.type = ?)")
         args.append(code)
@@ -411,4 +422,83 @@ def link_note_type(note_id: int, code: str) -> int:
 def unlink_note_type(note_id: int, code: str) -> int:
     return db.get().execute(
         "DELETE FROM note_types WHERE note_id = ? AND type = ?", (note_id, code)
+    ).rowcount
+
+
+# ---------- 排盘的「所问之事」（charts.title） ----------
+
+def update_chart_title(chart_id: int, title: str) -> int:
+    return db.get().execute("UPDATE charts SET title = ? WHERE id = ?", (title, chart_id)).rowcount
+
+
+# ---------- 排盘「特点」（tags / chart_tags）：只贴在排盘上，记这个盘本身的特别之处（如从格、伤官见官） ----------
+
+def search_tags(keyword: str, limit: int = 30) -> list[dict]:
+    # 空关键字 = 全部；常用的在前；英文不区分大小写
+    rows = db.get().execute(
+        """
+        SELECT t.id, t.name, (SELECT COUNT(*) FROM chart_tags ct WHERE ct.tag_id = t.id) AS uses
+        FROM tags t
+        WHERE instr(lower(t.name), lower(?)) > 0
+        ORDER BY instr(lower(t.name), lower(?)), uses DESC, t.name
+        LIMIT ?
+        """,
+        (keyword, keyword, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+def get_or_create_tag(name: str) -> int:
+    db.get().execute("INSERT OR IGNORE INTO tags(name) VALUES (?)", (name,))
+    return db.get().execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()["id"]
+
+def delete_tag(tag_id: int) -> int:
+    # chart_tags 设了 ON DELETE CASCADE：所有排盘上的这个特点一起去掉
+    return db.get().execute("DELETE FROM tags WHERE id = ?", (tag_id,)).rowcount
+
+def get_chart_tags(chart_id: int) -> list[dict]:
+    rows = db.get().execute(
+        """
+        SELECT t.id, t.name FROM chart_tags ct JOIN tags t ON t.id = ct.tag_id
+        WHERE ct.chart_id = ? ORDER BY ct.seq, t.name
+        """,
+        (chart_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+def link_chart_tag(chart_id: int, tag_id: int) -> int:
+    # seq = 这个排盘里目前最大的序号 + 1 → 新加的排在最后
+    return db.get().execute(
+        """
+        INSERT OR IGNORE INTO chart_tags(chart_id, tag_id, seq)
+        VALUES (?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM chart_tags WHERE chart_id = ?))
+        """,
+        (chart_id, tag_id, chart_id),
+    ).rowcount
+
+def unlink_chart_tag(chart_id: int, tag_id: int) -> int:
+    return db.get().execute(
+        "DELETE FROM chart_tags WHERE chart_id = ? AND tag_id = ?", (chart_id, tag_id)
+    ).rowcount
+
+def note_ids_of_subject(subject_id: int) -> list[int]:
+    """这位案主关联的笔记（不含已在回收站的）。"""
+    rows = db.get().execute(
+        """
+        SELECT n.id FROM notes_subjects ns JOIN notes n ON n.id = ns.note_id
+        WHERE ns.subject_id = ? AND n.deleted_at IS NULL
+        """,
+        (subject_id,),
+    ).fetchall()
+    return [r["id"] for r in rows]
+
+
+def update_bazi_name(chart_id: int, name: str) -> int:
+    """改八字排盘的姓名：快照和参数里的 name 一起改（排盘结果本身不变）。"""
+    return db.get().execute(
+        """
+        UPDATE charts SET snapshot_json = json_set(snapshot_json, '$.name', ?),
+                          params_json   = json_set(params_json, '$.name', ?)
+        WHERE id = ? AND type = 'bazi'
+        """,
+        (name, name, chart_id),
     ).rowcount

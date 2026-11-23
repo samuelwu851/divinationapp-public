@@ -41,43 +41,6 @@ def resolve(
     }
 
 
-def bazi(
-    moment: datetime,
-    longitude: float | None = None,
-    tz_offset_hours: float = 8,
-) -> dict:
-    """时间栏时刻进；选了地区(传经度)就按真太阳时排盘，否则用时间栏。"""
-    r = resolve(moment, longitude, tz_offset_hours)
-    sizhu = r["sizhu"]
-    lunar = r["lunar"]
-    tst = r["true_solar_time"]
-
-    return {
-        "input_time": r["input_time"].strftime("%Y-%m-%d %H:%M:%S"),
-        "true_solar_time": tst.strftime("%Y-%m-%d %H:%M:%S") if tst else None,
-        "year": sizhu.year.name,
-        "month": sizhu.month.name,
-        "day": sizhu.day.name,
-        "hour": sizhu.hour.name,
-        "lunar": lunar["lunar_date"],
-        "prev_jieqi": lunar["prev_jieqi"],
-        "next_jieqi": lunar["next_jieqi"],
-    }
-
-
-def bazi_json(
-    year: int, month: int, day: int, hour: int, minute: int,
-    longitude: float | None = None,
-    tz_offset_hours: float = 8,
-) -> str:
-    """平台层边界：基本类型进，JSON 串出。"""
-    moment = datetime(year, month, day, hour, minute)
-    return json.dumps(
-        bazi(moment, longitude, tz_offset_hours),
-        ensure_ascii=False,
-    )
-
-
 def solar_to_lunar_json(year: int, month: int, day: int,
                         hour: int = 0, minute: int = 0) -> str:
     """公历 → 农历（供农历选择器定位默认值）。"""
@@ -104,11 +67,6 @@ def lunar_months_json(year: int) -> str:
     )
 
 COMMANDS = {
-    "bazi": lambda req: bazi_json(
-        req["year"], req["month"], req["day"], req["hour"], req["minute"],
-        req.get("longitude"),
-        req.get("tz_offset_hours", 8),
-    ),
     "solar_to_lunar": lambda req: solar_to_lunar_json(
         req["year"], req["month"], req["day"],
         req.get("hour", 0), req.get("minute", 0),

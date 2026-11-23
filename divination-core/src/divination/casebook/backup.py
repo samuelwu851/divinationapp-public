@@ -56,7 +56,10 @@ def backup(dest_path: str) -> dict:
             "notes": _note_count(conn),
             "attachments": len(files),
         }
-        partial = dest_path + ".part"          # 先写临时文件，写完再改名：写到一半出错不会留下坏的备份
+        # 先在 App 自己的临时文件夹里打包，打包好再拷到用户选的位置。
+        # 不能在目标旁边写「xxx.zip.part」再改名：沙盒只允许写用户在存储面板里选的那**一个**文件，
+        # 旁边多出来的文件会被拒绝（Operation not permitted）。
+        partial = os.path.join(tmp, "backup.zip")
         with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as z:
             z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             z.write(snap, _DB_NAME)
@@ -65,7 +68,14 @@ def backup(dest_path: str) -> dict:
                 if os.path.isfile(full):
                     # 图片本来就是压缩过的，再压没用，直接存
                     z.write(full, _ATT_DIR + name, compress_type=zipfile.ZIP_STORED)
-        os.replace(partial, dest_path)
+        try:
+            shutil.copyfile(partial, dest_path)
+        except BaseException:
+            try:
+                os.remove(dest_path)           # 拷到一半出错：别留下不完整的备份
+            except OSError:
+                pass
+            raise
     return {"path": dest_path, "notes": manifest["notes"], "attachments": len(files),
             "size": os.path.getsize(dest_path)}
 

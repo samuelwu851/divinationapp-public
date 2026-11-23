@@ -170,6 +170,15 @@ function guaRow(guas) {
   return row
 }
 
+/** 梅花数字起卦 / 指定起卦：卡片抬头写怎么起的卦（时间起卦写时间）。 */
+const TRIGRAMS = ['乾', '兑', '离', '震', '巽', '坎', '艮', '坤']
+const LINES = ['初爻', '二爻', '三爻', '四爻', '五爻', '上爻']
+function meihuaMethodText(q) {
+  if (q?.method === 'number') return '数字起卦 ' + (q.numbers || []).join('·')
+  if (q?.method === 'specified') return `指定起卦 上${TRIGRAMS[q.upper - 1] ?? '?'}下${TRIGRAMS[q.lower - 1] ?? '?'} ${LINES[q.moving_line - 1] ?? ''}动`
+  return ''
+}
+
 function head(...parts) {
   const h = el('div', 'cc-head')
   parts.filter(Boolean).forEach((p, i) => {
@@ -191,18 +200,52 @@ function renderCard(dom, chart) {
       p.append(el('div', 'lbl', lbl), ganzhiChar(gz[0]), ganzhiChar(gz[1]))
       pillars.append(p)
     }
-    body.push(head('八字', s.name || chart.title, c.gender, c.input_time), pillars)
+    body.push(head('八字', s.name, c.gender, c.input_time), pillars)
   } else if (chart.type === 'iching') {
-    body.push(head('易经速查', chart.title), guaPair(s.original, s.changed))
+    body.push(head('易经速查'), guaPair(s.original, s.changed))
   } else if (chart.type === 'meihua') {
-    body.push(head('梅花易数', chart.title, (s.bazi?.input_time || '').slice(0, 16)), guaPair(s.original, s.changed))
+    body.push(head('梅花易数', (s.bazi?.input_time || '').slice(0, 16) || meihuaMethodText(s.qigua)), guaPair(s.original, s.changed))
   } else if (s.card) {
     const c = s.card
-    body.push(head(c.title || '排盘', chart.title, c.subtitle), guaRow(c.guas))
+    body.push(head(c.title || '排盘', c.subtitle), guaRow(c.guas))
   } else {
     body.push(head('排盘'), el('div', 'cc-missing', '这个版本还不支持显示这种排盘'))
   }
   dom.replaceChildren(...body, dom.querySelector('.cc-del'))
+  renderBelow(dom.parentElement?.querySelector('.chart-below'), chart)
+}
+
+/** 卡片外面、下方：所问之事（chart.title）在上，一排特点在下（可以左右滑）。都没有就不占地方。 */
+function renderBelow(box, chart) {
+  if (!box) return
+  const parts = []
+  if (chart.title) parts.push(el('div', 'cc-question', chart.title))
+  if (chart.tags?.length) {
+    const row = el('div', 'cc-tags')
+    for (const t of chart.tags) {
+      const chip = el('span', 'cc-tag', t.name.length > 8 ? t.name.slice(0, 8) + '…' : t.name)   // 最多 8 个字
+      chip.title = t.name
+      row.append(chip)
+    }
+    parts.push(row)
+  }
+  if (!parts.length) { box.replaceChildren(); return }
+  const inner = el('div', 'chart-below-inner')
+  inner.append(...parts)
+  box.replaceChildren(inner)
+}
+
+// 正文里的卡片，按排盘 id 记下来：排盘窗口里改了所问之事 / 特点，宿主调 refreshChart 重画这些卡片
+const cardViews = new Map()          // id → Set<{card, labels}>
+
+function refreshChartCards(id) {
+  chartCache.delete(id)
+  const views = cardViews.get(id)
+  if (!views) return
+  for (const v of [...views]) {
+    if (!v.card.isConnected) { views.delete(v); continue }
+    loadChart(id).then(c => { renderCard(v.card, c); renderChartLabels(v.labels, c) }).catch(() => {})
+  }
 }
 
 // ---------- 排盘卡片旁的标签：加 / 删立刻存进数据库（和插入排盘一样，不等保存） ----------
@@ -343,7 +386,8 @@ const ChartCard = Node.create({
       const anchor = el('div', 'chart-anchor')
       const card = el('div', 'chart-card')
       const labels = el('div', 'chart-labels')
-      anchor.append(card, labels)
+      const below = el('div', 'chart-below')        // 卡片外、下方：所问之事 + 特点（宽度跟卡片一样）
+      anchor.append(card, below, labels)
       wrap.append(anchor)
 
       const del = el('button', 'cc-del', '×')
@@ -355,6 +399,8 @@ const ChartCard = Node.create({
         editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run()
       })
       card.append(head('排盘', '载入中…'), del)
+      if (!cardViews.has(node.attrs.id)) cardViews.set(node.attrs.id, new Set())
+      cardViews.get(node.attrs.id).add({ card, labels })
       loadChart(node.attrs.id)
         .then(c => { renderCard(card, c); renderChartLabels(labels, c) })
         .catch(() => card.replaceChildren(head('排盘'), el('div', 'cc-missing', '这个排盘已被删除'), del))
@@ -658,7 +704,7 @@ window.noteEditor = {
     })
     const refresh = window.noteEditor._refresh
     editor.on('transaction', refresh)
-    editor.on('update', () => host.notify('changed'))
+    editor.on('update', () => { host.notify('changed'); find?.refresh() })
     // 记录光标是否在正文：点进正文 → 在；点到标题、案主输入框等别处 → 不在
     bodyActive = false
     editor.on('focus', () => { bodyActive = true })
@@ -693,6 +739,11 @@ window.noteEditor = {
   /** 五行颜色开关（在点开的排盘窗口里勾选，宿主同步过来）。 */
   setWuxingColor(on) {
     document.body.classList.toggle('wx-on', !!on)
+  },
+
+  /** 排盘窗口里改了这个排盘的所问之事 / 特点：重新取数据、重画正文里的卡片。 */
+  refreshChart(id) {
+    refreshChartCards(id)
   },
 
   /** 宿主在页面顶上盖的那一块（标题、案主、标签、术数）有多高：留出同样高的空白。 */
@@ -815,6 +866,124 @@ function startCrop(box, pos) {
   cancelBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); end() })
   okBtn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); finish() })
 }
+
+// ---------- 在笔记里查找（⌘F / Ctrl+F） ----------
+// 不改动正文：在页面里找出命中的文字，用 CSS 的 Custom Highlight API 涂上颜色（Safari 17.2+ 支持）。
+// 正文改了（打字、删字）会自动重新找。
+const find = (() => {
+  const bar = document.getElementById('find-bar')
+  const input = document.getElementById('find-input')
+  const count = document.getElementById('find-count')
+  let ranges = []
+  let current = -1
+  // 注意：这个文件里的 Highlight 是 TipTap 的「高亮」扩展（工具栏用），浏览器自带的高亮类要从 globalThis 拿
+  const CSSHighlight = globalThis.Highlight
+  const supported = typeof CSSHighlight === 'function' && !!CSS.highlights
+
+  /** 正文里所有文字节点（跳过排盘卡片旁的标签浮窗这种界面上的字）。 */
+  function textNodes() {
+    const root = editor?.view.dom
+    if (!root) return []
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: n => (n.parentElement?.closest('.chart-labels, .cc-del') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    })
+    const out = []
+    while (walker.nextNode()) out.push(walker.currentNode)
+    return out
+  }
+
+  function search() {
+    const q = input.value.trim().toLowerCase()
+    ranges = []
+    if (q) {
+      for (const node of textNodes()) {            // 每个文字节点里找（英文不分大小写）
+        const text = node.data.toLowerCase()
+        let i = text.indexOf(q)
+        while (i !== -1) {
+          const r = document.createRange()
+          r.setStart(node, i)
+          r.setEnd(node, i + q.length)
+          ranges.push(r)
+          i = text.indexOf(q, i + q.length)
+        }
+      }
+    }
+    if (current >= ranges.length) current = ranges.length - 1
+    if (current < 0 && ranges.length) current = 0
+    paint()
+  }
+
+  function paint() {
+    if (supported) {
+      CSS.highlights.set('find-hit', new CSSHighlight(...ranges))
+      CSS.highlights.set('find-current', new CSSHighlight(...(ranges[current] ? [ranges[current]] : [])))
+    }
+    count.textContent = input.value.trim() ? (ranges.length ? `${current + 1}/${ranges.length}` : '没有') : ''
+  }
+
+  /** 把当前这个滚到窗口中间（工具栏会挡住顶上一块，所以放中间）。 */
+  function reveal() {
+    const r = ranges[current]
+    if (!r) return
+    const box = r.getBoundingClientRect()
+    window.scrollBy({ top: box.top - window.innerHeight / 2, behavior: 'smooth' })
+  }
+
+  function step(d) {
+    if (!ranges.length) return
+    current = (current + d + ranges.length) % ranges.length
+    paint()
+    reveal()
+  }
+
+  function open() {
+    bar.hidden = false
+    const sel = window.getSelection()?.toString().trim()
+    if (sel && !sel.includes('\n')) input.value = sel      // 选着一段字时，直接拿来找
+    input.focus()
+    input.select()
+    current = -1
+    search()
+    reveal()
+  }
+
+  function close() {
+    bar.hidden = true
+    ranges = []
+    current = -1
+    if (supported) { CSS.highlights.delete('find-hit'); CSS.highlights.delete('find-current') }
+    editor?.commands.focus()
+  }
+
+  input.addEventListener('input', () => { current = -1; search(); reveal() })
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1) }
+    if (e.key === 'Escape') { e.preventDefault(); close() }
+  })
+  document.getElementById('find-next').addEventListener('click', () => step(1))
+  document.getElementById('find-prev').addEventListener('click', () => step(-1))
+  document.getElementById('find-close').addEventListener('click', close)
+  // ⌘F / Ctrl+F（宿主那边也会转过来调 open）；⌘G / ⇧⌘G 下一个 / 上一个
+  window.addEventListener('keydown', e => {
+    const mod = e.metaKey || e.ctrlKey
+    if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); open() }
+    else if (mod && e.key.toLowerCase() === 'g' && !bar.hidden) { e.preventDefault(); step(e.shiftKey ? -1 : 1) }
+    else if (e.key === 'Escape' && !bar.hidden) close()
+  }, true)
+
+  let pending = 0
+  return {
+    open, close,
+    /** 正文变了：查找框开着就重新找（稍等一下，打字时不用每个字都找一遍）。 */
+    refresh() {
+      if (bar.hidden) return
+      clearTimeout(pending)
+      pending = setTimeout(search, 150)
+    },
+  }
+})()
+
+window.noteEditor.openFind = () => find.open()
 
 window.noteEditor._refresh = setupToolbar()
 

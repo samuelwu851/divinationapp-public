@@ -11,6 +11,8 @@ struct ChartDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var loaded: Loaded?
+    @State private var meta: Meta?                 // 所问之事 + 特点
+    @State private var baziName: String?           // 八字：在窗口里改过的姓名
     /// 笔记里排盘的五行颜色：这个窗口里勾选，记住上次的选择；笔记正文里的卡片同步（NoteEditorView 读同一个键）。
     /// 和易经速查 / 梅花易数页面的「五行颜色」分开记，互不影响。
     static let wuxingColorKey = "noteChartWuxingColorOn"
@@ -19,7 +21,7 @@ struct ChartDetailView: View {
     enum Loaded {
         case bazi(BaziChart, name: String, birth: Birth)
         case iching(title: String, original: Hexagram, changed: Hexagram, yilin: String?, cangua: [CanGuaGroup]?)
-        case meihua(bazi: BaziResult, original: Hexagram, changed: Hexagram, yilin: String?, cangua: [CanGuaGroup]?)
+        case meihua(bazi: BaziPillarsResult?, methodText: String?, original: Hexagram, changed: Hexagram, yilin: String?, cangua: [CanGuaGroup]?)
         case registered(ChartKind, AnyView)          // 注册表里的类型（如插件），视图由它自己给
         case unsupported
         case missing
@@ -39,7 +41,13 @@ struct ChartDetailView: View {
         .environment(\.wuxingColorOn, wuxingColorOn)
         .frame(minWidth: 650, idealWidth: 760, minHeight: 600, idealHeight: 780)   // 比原来宽约 1/5，八字七柱、本卦|变卦都放得下
         .background(PatternBackground())
-        .onAppear { if loaded == nil { loaded = Self.load(client.chartGet(id: chartId)) } }
+        .onAppear {
+            if loaded == nil {
+                let data = client.chartGet(id: chartId)
+                loaded = Self.load(data)
+                meta = Self.loadMeta(data)
+            }
+        }
     }
 
     /// 五行颜色勾选框：放在内容右上角（同易经速查），不放工具栏——工具栏里会套一层胶囊背景。
@@ -55,27 +63,36 @@ struct ChartDetailView: View {
     private var content: some View {
         switch loaded {
         case .bazi(let chart, let name, let birth):
-            BaziChartView(chart: chart, name: name, birth: birth)
-        case .iching(let title, let org, let chg, let yilin, let cangua):
+            BaziChartView(chart: chart, name: baziName ?? name, birth: birth,
+                          annotation: annotation.map { AnyView($0) },
+                          nameEditor: AnyView(BaziNameField(client: client, chartId: chartId, name: baziName ?? name,
+                                                            onChanged: { baziName = $0 })))
+        case .iching(_, let org, let chg, let yilin, let cangua):
             ScrollView {
                 VStack(spacing: 18) {
                     wuxingToggle
-                    Text(title.isEmpty ? "易经速查" : title).font(.title2).bold()
+                    Text("易经速查").font(.title2).bold()
+                    annotation                                       // 所问之事 + 特点：卦的上面
                     guaView(org, chg, yilin, cangua)
                 }
                 .padding(32)
                 .frame(maxWidth: .infinity)
             }
             .navigationTitle("易经速查")
-        case .meihua(let bazi, let org, let chg, let yilin, let cangua):
+        case .meihua(let bazi, let methodText, let org, let chg, let yilin, let cangua):
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     wuxingToggle
-                    VStack(alignment: .leading, spacing: 8) {        // 同梅花易数结果页左上角
-                        Text(bazi.inputTime).font(.body)
-                        Text(bazi.lunar).font(.body)
-                        BaziPillarsView(pillars: [bazi.year, bazi.month, bazi.day, bazi.hour])
+                    if let bazi {                                    // 同梅花易数结果页左上角（数字 / 指定起卦是起卦那一刻）
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(bazi.inputTime).font(.body)
+                            Text(bazi.lunarTime).font(.body)
+                            BaziPillarsDetailView(pillars: bazi.pillars)    // 四柱 + 藏干 + 纳音
+                        }
+                    } else if let methodText {                       // 没带时间的老排盘：说明怎么起的卦
+                        Text(methodText).font(.title3)
                     }
+                    annotation                                       // 所问之事 + 特点：八字下面、卦上面
                     guaView(org, chg, yilin, cangua).frame(maxWidth: .infinity)
                 }
                 .padding(32)
@@ -85,6 +102,7 @@ struct ChartDetailView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     if kind.showsWuxingToggle { wuxingToggle }
+                    annotation
                     view
                 }
                 .padding(32)
@@ -113,6 +131,18 @@ struct ChartDetailView: View {
         }
     }
 
+    /// 所问之事 + 特点（左对齐，可编辑）。排盘取不到时没有。
+    private var annotation: ChartAnnotationView? {
+        meta.map { ChartAnnotationView(client: client, chartId: chartId, question: $0.title, tags: $0.tags ?? []) }
+    }
+
+    private struct Meta: Decodable { let title: String; let tags: [ChartTag]? }
+
+    private static func loadMeta(_ data: Data?) -> Meta? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(Meta.self, from: data)
+    }
+
     private func message(_ text: String) -> some View {
         Text(text).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -134,12 +164,41 @@ struct ChartDetailView: View {
         let yilin: String?
         let cangua: [CanGuaGroup]?      // 加参卦之前存的盘没有这一项 → 现场算
     }
+    /// 梅花快照里的起卦信息。numbers：时间起卦是 {year, month…}，数字起卦是 [a, b, c]——解不成数组就当没有。
+    private struct Qigua: Decodable {
+        let method: String?
+        let numbers: [Int]?
+        let upper: Int?
+        let lower: Int?
+        let movingLine: Int?
+        enum CodingKeys: String, CodingKey { case method, numbers, upper, lower, movingLine }
+        init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            method = try? c.decode(String.self, forKey: .method)
+            numbers = try? c.decode([Int].self, forKey: .numbers)
+            upper = try? c.decode(Int.self, forKey: .upper)
+            lower = try? c.decode(Int.self, forKey: .lower)
+            movingLine = try? c.decode(Int.self, forKey: .movingLine)
+        }
+    }
+
     private struct MeihuaSnapshot: Decodable {
-        let bazi: BaziResult
+        let bazi: BaziPillarsResult?
+        let qigua: Qigua?
         let original: Hexagram
         let changed: Hexagram
         let yilin: String?
         let cangua: [CanGuaGroup]?
+        enum CodingKeys: String, CodingKey { case bazi, qigua, original, changed, yilin, cangua }
+        init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            bazi = try? c.decode(BaziPillarsResult.self, forKey: .bazi)      // 旧格式的四柱解不开就不显示
+            qigua = try? c.decode(Qigua.self, forKey: .qigua)
+            original = try c.decode(Hexagram.self, forKey: .original)
+            changed = try c.decode(Hexagram.self, forKey: .changed)
+            yilin = try? c.decode(String.self, forKey: .yilin)
+            cangua = try? c.decode([CanGuaGroup].self, forKey: .cangua)
+        }
     }
 
     private static func load(_ data: Data?) -> Loaded {
@@ -159,7 +218,11 @@ struct ChartDetailView: View {
                            yilin: s.snapshot.yilin, cangua: s.snapshot.cangua)
         case "meihua":
             guard let s = try? dec.decode(Stored<Empty, MeihuaSnapshot>.self, from: data) else { return .unsupported }
-            return .meihua(bazi: s.snapshot.bazi, original: s.snapshot.original, changed: s.snapshot.changed,
+            let q = s.snapshot.qigua
+            return .meihua(bazi: s.snapshot.bazi,
+                           methodText: meihuaMethodText(method: q?.method, numbers: q?.numbers, upper: q?.upper,
+                                                        lower: q?.lower, moving: q?.movingLine),
+                           original: s.snapshot.original, changed: s.snapshot.changed,
                            yilin: s.snapshot.yilin, cangua: s.snapshot.cangua)
         default:
             guard let kind = ChartKindRegistry.kind(for: head.type),

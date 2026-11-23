@@ -20,7 +20,6 @@ api 扫描插件时会调 register_builders 合并进来（同 COMMANDS 的做�
 from datetime import datetime
 
 from divination.bazi import service as bazi_service
-from divination.ganzhi import service as ganzhi_service
 from divination.iching import service as iching_service
 from divination.meihua import service as meihua_service
 
@@ -39,10 +38,11 @@ def _yilin_text(org: int, chg: int) -> str | None:
 
 
 def _bazi(p: dict) -> tuple[str, dict]:
+    # 排盘的 title 专门存「所问之事」（插入时由用户填，见 service.create_chart）；姓名只放在快照里
     name = (p.get("name") or "").strip()
     birth = bazi_service.moment(p["year"], p["month"], p["day"], p.get("hour", 0), p.get("minute", 0))
     chart = bazi_service.bazi_chart(birth, bool(p["is_male"]))   # 公元 1–2200 年，1582 年以前按儒略历
-    return name, {"name": name, "chart": chart}
+    return "", {"name": name, "chart": chart}
 
 
 def _iching(p: dict) -> tuple[str, dict]:
@@ -57,12 +57,14 @@ def _iching(p: dict) -> tuple[str, dict]:
 
 
 def _meihua(p: dict) -> tuple[str, dict]:
-    moment = _moment(p)
-    q = meihua_service.qigua(moment)
+    """三种起卦法（见 meihua.service.qigua_request）。四柱（bazi 包的 pillars：干支、藏干、纳音）：
+    时间起卦是所选的时刻；数字 / 指定起卦是起卦那一刻（前端把当时的时间一起传来，没传就不排）。"""
+    q = meihua_service.qigua_request(p)
     org, chg = q["ben_gua"]["value"], q["bian_gua"]["value"]
+    bazi = bazi_service.pillars(_moment(p)) if "year" in p else None
     return "", {
         "qigua": q,
-        "bazi": ganzhi_service.bazi(moment),
+        "bazi": bazi,
         "original": iching_service.checkandpack(org),
         "changed": iching_service.checkandpack(chg),
         "yilin": _yilin_text(org, chg),

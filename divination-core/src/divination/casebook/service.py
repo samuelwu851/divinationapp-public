@@ -142,11 +142,20 @@ def cleanup_note(note_id: int) -> dict:
 
 # ---------- 排盘 ----------
 
-def create_chart(note_id: int, chart_type: str, params: dict) -> dict:
-    """按参数排盘并存进这份笔记，返回存好的排盘（含快照）。"""
+def _clean_question(text) -> str:
+    """所问之事：去掉首尾空白、换行换成空格，最多 100 字。"""
+    q = " ".join(str(text or "").split())
+    if len(q) > 100:
+        raise ValueError("所问之事太长（最多 100 字）")
+    return q
+
+
+def create_chart(note_id: int, chart_type: str, params: dict, question: str = "") -> dict:
+    """按参数排盘并存进这份笔记，返回存好的排盘（含快照）。question = 所问之事（可不填），存在 title 里。"""
     if repo.get_note(note_id) is None:
         raise LookupError(f"笔记不存在：{note_id}")
-    title, snapshot = charts.build(chart_type, params)
+    builder_title, snapshot = charts.build(chart_type, params)
+    title = _clean_question(question) or builder_title
     with db.get():
         chart_id = repo.insert_chart(
             note_id, chart_type, title,
@@ -170,6 +179,7 @@ def get_chart(chart_id: int) -> dict:
         "algo_version": row["algo_version"],
         "created_at": row["created_at"],
         "labels": repo.get_chart_labels(chart_id),
+        "tags": repo.get_chart_tags(chart_id),        # 特点
     }
 
 
@@ -347,11 +357,16 @@ def update_subject(subject_id: int, name: str, remark: str = "",
     return get_subject(subject_id)
 
 
-def delete_subject(subject_id: int) -> None:
-    """删除案主：只解除和笔记的关联，笔记本身保留。"""
+def delete_subject(subject_id: int, with_notes: bool = False) -> int:
+    """删除案主。with_notes=False：只解除和笔记的关联，笔记保留；
+    True：他的笔记一起放进回收站（可以恢复）。返回放进回收站的笔记数。"""
     with db.get():
+        note_ids = repo.note_ids_of_subject(subject_id) if with_notes else []
+        for nid in note_ids:
+            repo.set_note_trashed(nid, True)
         if repo.delete_subject(subject_id) == 0:
             raise LookupError(f"案主不存在：{subject_id}")
+    return len(note_ids)
 
 def _clean_birthday(text: str) -> str:
     """生日 'YYYY-MM-DD' → 检查这天在历史公历里存在，返回补足位数的写法（如 '618-1-5' → '0618-01-05'）。
@@ -476,7 +491,55 @@ def _note_cleanup_cmd(req: dict) -> str:
     return _to_json(cleanup_note(req["note_id"]))
 
 def _chart_create_cmd(req: dict) -> str:
-    return _to_json(create_chart(req["note_id"], req["type"], req.get("params", {})))
+    return _to_json(create_chart(req["note_id"], req["type"], req.get("params", {}), req.get("question", "")))
+
+def _chart_question_cmd(req: dict) -> str:
+    """改「所问之事」。"""
+    q = _clean_question(req.get("question", ""))
+    with db.get():
+        if repo.update_chart_title(req["chart_id"], q) == 0:
+            raise LookupError(f"排盘不存在：{req['chart_id']}")
+    return _to_json({"question": q})
+
+def _chart_name_cmd(req: dict) -> str:
+    """改八字排盘的姓名（可以清空）。"""
+    name = " ".join(str(req.get("name", "")).split())
+    if len(name) > 30:
+        raise ValueError("姓名太长（最多 30 字）")
+    with db.get():
+        if repo.update_bazi_name(req["chart_id"], name) == 0:
+            raise LookupError(f"八字排盘不存在：{req['chart_id']}")
+    return _to_json({"name": name})
+
+def _clean_tag_name(name) -> str:
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise ValueError("特点不能为空")
+    if len(name) > 30:
+        raise ValueError("特点太长（最多 30 字）")
+    return name
+
+def _tag_search_cmd(req: dict) -> str:
+    return _to_json({"tags": repo.search_tags(str(req.get("keyword", "")).strip())})
+
+def _tag_delete_cmd(req: dict) -> str:
+    with db.get():
+        repo.delete_tag(req["tag_id"])
+    return _to_json({"ok": True})
+
+def _chart_tag_add_cmd(req: dict) -> str:
+    """按名字给排盘加特点（没有就顺便新建），返回排盘现在的全部特点。"""
+    name = _clean_tag_name(req["name"])
+    with db.get():
+        if repo.get_chart(req["chart_id"]) is None:
+            raise LookupError(f"排盘不存在：{req['chart_id']}")
+        repo.link_chart_tag(req["chart_id"], repo.get_or_create_tag(name))
+    return _to_json({"tags": repo.get_chart_tags(req["chart_id"])})
+
+def _chart_tag_remove_cmd(req: dict) -> str:
+    with db.get():
+        repo.unlink_chart_tag(req["chart_id"], req["tag_id"])
+    return _to_json({"tags": repo.get_chart_tags(req["chart_id"])})
 
 def _chart_get_cmd(req: dict) -> str:
     return _to_json(get_chart(req["chart_id"]))
@@ -527,8 +590,8 @@ def _subject_update_cmd(req: dict) -> str:
         req.get("birthday"), req.get("birthtime"), req.get("gender"),))
 
 def _subject_delete_cmd(req: dict) -> str:
-    delete_subject(req["subject_id"])
-    return _to_json({"ok": True})
+    trashed = delete_subject(req["subject_id"], bool(req.get("with_notes", False)))
+    return _to_json({"ok": True, "trashed_notes": trashed})
 
 def _label_list_cmd(req: dict) -> str:
     return _to_json({"labels": list_labels()})
@@ -577,6 +640,12 @@ COMMANDS = {
     "subject_get": _subject_get_cmd,
     "subject_update": _subject_update_cmd,
     "subject_delete": _subject_delete_cmd,
+    "chart_question": _chart_question_cmd,      # 改排盘的「所问之事」
+    "chart_name": _chart_name_cmd,              # 改八字排盘的姓名
+    "tag_search": _tag_search_cmd,              # 排盘特点：搜索（空 = 全部）
+    "tag_delete": _tag_delete_cmd,              # 彻底删除一个特点（所有排盘上一起去掉）
+    "chart_tag_add": _chart_tag_add_cmd,        # 给排盘加特点（按名字，没有就新建）
+    "chart_tag_remove": _chart_tag_remove_cmd,
     "label_list": _label_list_cmd,
     "shushu_list": _shushu_list_cmd,
     "note_shushu_add": _note_shushu_add_cmd,

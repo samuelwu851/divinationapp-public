@@ -8,15 +8,6 @@ struct MeihuaResult: Codable {
     let bianGua: Gua      // bian_gua
 }
 
-/// 八字排盘结果（对应后端 bazi 命令的 JSON，只取要显示的字段）。
-struct BaziResult: Codable {
-    let inputTime: String   // input_time，公历
-    let lunar: String       // 农历
-    let year: String        // 四柱：年柱
-    let month: String       // 月柱
-    let day: String         // 日柱
-    let hour: String        // 时柱
-}
 
 /// 公历→农历 结果（对应后端 solar_to_lunar）。
 struct SolarToLunarResult: Codable {
@@ -50,19 +41,21 @@ struct DivinationClient {
         decode(send(["cmd": "lookup", "value": value]))
     }
 
-    func meihua(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> MeihuaResult? {
-        decode(send(["cmd": "meihua", "year": year, "month": month,
-                     "day": day, "hour": hour, "minute": minute]))
+    /// 梅花起卦。params 见 MeihuaInput.params：时间起卦给年月日时分，数字起卦 / 指定起卦带 method。
+    func meihua(_ params: [String: Any]) -> (MeihuaResult?, String?) {
+        callWithError("meihua", params)
     }
 
-    /// 只排四柱（bazi 包）。梅花易数页用；笔记里梅花快照的格式还是旧的 BaziResult。
+    /// 改笔记里八字排盘的姓名。
+    func chartName(id: Int, name: String) -> String? {
+        struct R: Codable { let name: String }
+        let r: R? = decode(send(["cmd": "chart_name", "chart_id": id, "name": name]))
+        return r?.name
+    }
+
+    /// 只排四柱（bazi 包）：梅花易数页用。
     func baziPillars(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> BaziPillarsResult? {
         decode(send(["cmd": "bazi_pillars", "year": year, "month": month,
-                     "day": day, "hour": hour, "minute": minute]))
-    }
-
-    func bazi(year: Int, month: Int, day: Int, hour: Int, minute: Int) -> BaziResult? {
-        decode(send(["cmd": "bazi", "year": year, "month": month,
                      "day": day, "hour": hour, "minute": minute]))
     }
 
@@ -183,8 +176,9 @@ struct DivinationClient {
     }
 
     @discardableResult
-    func subjectDelete(id: Int) -> Bool {
-        let r: OkResult? = decode(send(["cmd": "subject_delete", "subject_id": id]))
+    /// 删除案主。withNotes = true：他的笔记一起放进回收站；false：笔记保留。
+    func subjectDelete(id: Int, withNotes: Bool = false) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "subject_delete", "subject_id": id, "with_notes": withNotes]))
         return r?.ok == true
     }
 
@@ -293,9 +287,45 @@ struct DivinationClient {
     }
 
     /// 按参数排盘并存进笔记（type: bazi / iching / meihua），返回排盘 id。
-    func chartCreate(noteId: Int, type: String, params: [String: Any]) -> Int? {
-        let r: ChartRef? = decode(send(["cmd": "chart_create", "note_id": noteId, "type": type, "params": params]))
+    /// 排盘并存进笔记。question = 所问之事（可不填）。
+    func chartCreate(noteId: Int, type: String, params: [String: Any], question: String = "") -> Int? {
+        let r: ChartRef? = decode(send(["cmd": "chart_create", "note_id": noteId, "type": type,
+                                        "params": params, "question": question]))
         return r?.id
+    }
+
+    /// 改排盘的所问之事；返回整理后的文字（去掉多余空白），失败返回 nil。
+    func chartQuestion(id: Int, question: String) -> String? {
+        struct R: Codable { let question: String }
+        let r: R? = decode(send(["cmd": "chart_question", "chart_id": id, "question": question]))
+        return r?.question
+    }
+
+    /// 排盘特点：搜索（空 = 全部，常用的在前）。
+    func tagSearch(keyword: String) -> [ChartTag] {
+        struct R: Codable { let tags: [ChartTag] }
+        let r: R? = decode(send(["cmd": "tag_search", "keyword": keyword]))
+        return r?.tags ?? []
+    }
+
+    /// 给排盘加特点（按名字，没有就新建），返回排盘现在的全部特点。
+    func chartTagAdd(chartId: Int, name: String) -> [ChartTag]? {
+        struct R: Codable { let tags: [ChartTag] }
+        let r: R? = decode(send(["cmd": "chart_tag_add", "chart_id": chartId, "name": name]))
+        return r?.tags
+    }
+
+    func chartTagRemove(chartId: Int, tagId: Int) -> [ChartTag]? {
+        struct R: Codable { let tags: [ChartTag] }
+        let r: R? = decode(send(["cmd": "chart_tag_remove", "chart_id": chartId, "tag_id": tagId]))
+        return r?.tags
+    }
+
+    /// 彻底删除一个特点（所有排盘上一起去掉）。
+    @discardableResult
+    func tagDelete(id: Int) -> Bool {
+        let r: OkResult? = decode(send(["cmd": "tag_delete", "tag_id": id]))
+        return r?.ok == true
     }
 
     /// 取出一个已存的排盘（含快照），交给 ChartDetailView 解码。

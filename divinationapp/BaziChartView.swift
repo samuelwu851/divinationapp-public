@@ -9,6 +9,10 @@ struct BaziChartView: View {
     let chart: BaziChart
     let name: String
     let birth: Birth
+    /// 放在「公历 / 农历」下面那条分割线之下的内容（笔记里点开时：所问之事 + 特点）；八字页面不用
+    var annotation: AnyView? = nil
+    /// 乾造 / 坤造右边的姓名输入框（笔记里点开时可以改姓名）；八字页面不用，直接显示姓名
+    var nameEditor: AnyView? = nil
 
     private let client = DivinationClient()
 
@@ -20,10 +24,12 @@ struct BaziChartView: View {
     // 藏干区固定高度（最多 3 行），好让四柱纳音落在同一行对齐。
     private let cangganAreaHeight: CGFloat = 64
 
-    init(chart: BaziChart, name: String, birth: Birth) {
+    init(chart: BaziChart, name: String, birth: Birth, annotation: AnyView? = nil, nameEditor: AnyView? = nil) {
         self.chart = chart
         self.name = name
         self.birth = birth
+        self.annotation = annotation
+        self.nameEditor = nameEditor
         let cur = Calendar.current.component(.year, from: Date())
         _dayunIndex = State(initialValue: Self.defaultDaYunIndex(chart.dayun, currentYear: cur))
     }
@@ -50,6 +56,10 @@ struct BaziChartView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 Divider()
+                if let annotation {
+                    annotation                  // 所问之事 + 特点（左对齐）
+                    Divider()
+                }
                 topChart        // 上方：彩色排盘（四柱 + 选中大运/流年/流月）
                 Divider()
                 qiyunLine       // 起运/交运：夹在八字与大运列表之间
@@ -66,8 +76,13 @@ struct BaziChartView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                if !name.isEmpty { Text(name).font(.largeTitle).bold() }
-                Text(chart.gender).font(.title)
+                if let nameEditor {
+                    Text(chart.gender).font(.title)
+                    nameEditor                                   // 姓名：在乾造 / 坤造右边，可以改
+                } else {
+                    if !name.isEmpty { Text(name).font(.largeTitle).bold() }
+                    Text(chart.gender).font(.title)
+                }
             }
             Text("公历：\(chart.inputTime)").font(.title2).foregroundStyle(.primary)
             Text("农历：\(chart.lunarTime)").font(.title2).foregroundStyle(.primary)

@@ -174,4 +174,10 @@ def _liuyue_cmd(req: dict) -> str:
     birth = _birth(req)
     return json.dumps(liuyue(birth, req["target_year"]), ensure_ascii=False)
 
-COMMANDS = {"bazi_chart": _chart_cmd, "bazi_pillars": _pillars_cmd, "liuyue": _liuyue_cmd}
+def _reverse_cmd(req: dict) -> str:
+    from divination.bazi import reverse                 # 放这里引入：reverse 又要引入本模块
+    return json.dumps({"results": reverse.find_times(req["year"], req["month"], req["day"], req["hour"])},
+                      ensure_ascii=False)
+
+COMMANDS = {"bazi_chart": _chart_cmd, "bazi_pillars": _pillars_cmd, "liuyue": _liuyue_cmd,
+            "bazi_reverse": _reverse_cmd}           # 八字反推时间：给四柱，找出公元 1–2200 年里对得上的时刻

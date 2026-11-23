@@ -107,6 +107,13 @@ struct NoteLabel: Codable, Identifiable, Hashable {
     var uses: Int? = nil        // 只有 label_search 返回：有多少笔记 + 排盘在用（删除前提示用）
 }
 
+/// 排盘「特点」（只贴在排盘上，记这个盘本身的特别之处，如从格、伤官见官）。
+struct ChartTag: Codable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    var uses: Int? = nil        // 只有 tag_search 返回：有多少排盘在用
+}
+
 /// label_search 的外层：{ "labels": [...] }。
 struct LabelSearchResult: Codable {
     let labels: [NoteLabel]

@@ -4,6 +4,7 @@ import SwiftUI
 enum NoteEditTarget: Hashable {
     case new
     case edit(Int)
+    case newWithChart(ChartSaveSpec)      // 从排盘页「存进案例库」：新建笔记，正文里放好这个排盘
 }
 
 /// 笔记编辑器（独立一页）：标题 + 案主多选 + 正文（网页编辑器 TipTap，见 NoteEditorWebView）。
@@ -50,9 +51,15 @@ struct NoteEditorView: View {
     @State private var openChart: ChartID?
     @State private var editor = NoteEditorController()
     @State private var headerHeight: CGFloat = 0      // 顶上那一块（标题…术数）的高度
+    @State private var pendingShushu: String?          // 从排盘页存进来：要勾上的术数
     @State private var scrollY: CGFloat = 0           // 网页滚了多少
 
-    private var isNew: Bool { if case .new = target { return true } else { return false } }
+    private var isNew: Bool {
+        switch target {
+        case .new, .newWithChart: return true
+        case .edit: return false
+        }
+    }
 
     /// 顶上那一块：标题、案主、标签、术数（和正文之间一条分隔线）。
     private var header: some View {
@@ -123,6 +130,14 @@ struct NoteEditorView: View {
                 .offset(y: -min(scrollY, headerHeight))
         }
         .clipped()                                         // 往上挪出去的部分不要盖到窗口工具栏
+        // ⌘F：在笔记里查找。焦点在标题、案主输入框时也能用（网页自己也接 ⌘F / Ctrl+F）
+        .background {
+            Button("") { editor.openFind() }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+        }
         .background(PatternBackground())
         .navigationTitle(isNew ? "新建笔记" : "编辑笔记")
         .navigationBarBackButtonHidden(true)                 // 换成自定义返回，便于拦截
@@ -167,6 +182,9 @@ struct NoteEditorView: View {
         }
         .onDisappear(perform: finish)
         .onChange(of: chartWuxingColor) { _, on in editor.setWuxingColor(on) }   // 排盘窗口里勾选 → 卡片同步
+        .onReceive(NotificationCenter.default.publisher(for: ChartAnnotationView.changedNotification)) { n in
+            if let id = n.object as? Int { editor.refreshChart(id: id) }           // 排盘窗口里改了所问之事 / 特点
+        }
     }
 
     private func load() {
@@ -178,6 +196,22 @@ struct NoteEditorView: View {
             if let n = client.noteCreate(title: "", body: "") {
                 noteId = n.id
                 createdHere = true
+            }
+        case .newWithChart(let spec):
+            // 先建笔记，再排盘存进去，正文 = 这张排盘卡片 + 一个空段落（可以接着写）
+            if let n = client.noteCreate(title: "", body: "") {
+                noteId = n.id
+                createdHere = true
+                if let cid = client.chartCreate(noteId: n.id, type: spec.type, params: spec.params) {
+                    let doc: [String: Any] = ["type": "doc", "content": [
+                        ["type": "chart", "attrs": ["id": cid]],
+                        ["type": "paragraph"],
+                    ]]
+                    if let data = try? JSONSerialization.data(withJSONObject: doc) {
+                        content = String(data: data, encoding: .utf8) ?? ""
+                    }
+                    pendingShushu = spec.type              // 基线记好以后再勾上术数（算作未保存的改动）
+                }
             }
         case .edit(let id):
             if let n = client.noteGet(id: id) {
@@ -195,6 +229,10 @@ struct NoteEditorView: View {
         baseLabelIDs = Set(labels.map(\.id))
         baseShushu = Set(shushu.map(\.code))
         loaded = true
+        if let code = pendingShushu {
+            addShushu(code: code)
+            bodyChanged = true                              // 正文里已经有排盘了：没保存就离开要提示
+        }
 
         guard let noteId else { return }
         editor.wuxingColor = chartWuxingColor

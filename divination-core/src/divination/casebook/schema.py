@@ -150,4 +150,15 @@ ALTER TABLE subjects ADD COLUMN gender    INTEGER;  -- 1 男 / 0 女 / NULL 未�
 """
 
 
-MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]
+# V5：
+# - 排盘「特点」按添加先后排（同 V2 给标签加 seq）；
+# - 排盘的 title 统一用来存「所问之事」。以前八字把姓名也存进了 title（姓名在快照里另有一份），
+#   这里把这种 title 清掉，免得姓名被当成所问之事显示出来。
+SCHEMA_V5 = """
+ALTER TABLE chart_tags ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+UPDATE charts SET title = ''
+ WHERE type = 'bazi' AND title <> '' AND title = json_extract(snapshot_json, '$.name');
+"""
+
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5]

@@ -61,6 +61,9 @@ struct NotesWindowView: View {
             }
             .onAppear { reload() }                     // 从编辑器 / 案主页返回时也刷新
             .onChange(of: filter) { _, _ in reloadNotes() }
+            // 排盘页点了「存进案例库」：推进编辑器，新建一篇带这个排盘的笔记
+            .onChange(of: CasebookOpener.shared.pending) { _, _ in openPending() }
+            .onAppear { openPending() }
             #if os(macOS)
             .onReceive(NotificationCenter.default.publisher(for: CasebookBackup.restoredNotification)) { _ in
                 path = []                                  // 恢复了备份：回到列表、重新取数据
@@ -80,7 +83,7 @@ struct NotesWindowView: View {
     private var searchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("搜索标题或正文", text: $filter.keyword)
+            TextField("搜索标题、正文、所问之事、特点", text: $filter.keyword)
                 .textFieldStyle(.plain)
             if !filter.keyword.isEmpty {
                 Button { filter.keyword = "" } label: {
@@ -208,6 +211,12 @@ struct NotesWindowView: View {
     }
 
     private func reloadNotes() { notes = client.noteList(filter) }
+
+    private func openPending() {
+        guard let spec = CasebookOpener.shared.pending else { return }
+        CasebookOpener.shared.pending = nil
+        path = [.editor(.newWithChart(spec))]
+    }
 }
 
 /// 筛选胶囊（可多选，同一类选多个 = 都要满足）：没选时显示「标签 ▾」；选了一个显示它的名字，

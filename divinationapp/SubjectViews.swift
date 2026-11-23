@@ -185,14 +185,26 @@ struct SubjectDetailView: View {
             }
         }
         .alert("删除案主「\(baseName)」？", isPresented: $showDelete) {
-            Button("删除", role: .destructive) {
-                client.subjectDelete(id: subjectId)
-                dismiss()
+            if notes.isEmpty {
+                Button("删除", role: .destructive) {
+                    client.subjectDelete(id: subjectId)
+                    dismiss()
+                }
+            } else {
+                // 有笔记：问清楚笔记要不要一起删
+                Button("只删除案主，保留笔记") {
+                    client.subjectDelete(id: subjectId, withNotes: false)
+                    dismiss()
+                }
+                Button("案主和 \(notes.count) 篇笔记都删除", role: .destructive) {
+                    client.subjectDelete(id: subjectId, withNotes: true)
+                    dismiss()
+                }
             }
             Button("取消", role: .cancel) {}
         } message: {
             Text(notes.isEmpty ? "这个案主没有关联的笔记。"
-                               : "只会解除和 \(notes.count) 篇笔记的关联，笔记本身不会删除。")
+                               : "这个案主关联了 \(notes.count) 篇笔记。\n「只删除案主」：笔记都保留，只是不再关联他。\n「都删除」：笔记放进回收站，以后还能恢复。")
         }
         .alert("有未保存的修改", isPresented: $showUnsaved) {
             Button("保存并返回") { save(); dismiss() }

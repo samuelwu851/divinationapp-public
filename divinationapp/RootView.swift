@@ -79,7 +79,9 @@ struct MainView: View {
     }
 }
 
-/// 易经类主页：默认进「易经速查」，右上角 ⋯ 菜单切换易经类各子术数。
+/// 易经类主页：默认进「易经速查」。
+/// - 窗口右上角（工具栏）：笔 = 把现在这个盘存进案例库（新建笔记）；
+/// - 内容右上角：⋯ 菜单切换易经类各子术数（五行颜色、变卦模式这些开关放在内容左上角）。
 /// 用 switch 选择页面——切走再切回「梅花易数」时会重建视图、@State 自动归零。
 struct IChingHomeView: View {
     enum Page: String, CaseIterable {
@@ -88,6 +90,7 @@ struct IChingHomeView: View {
     }
 
     @State private var page: Page = .iching
+    @State private var current = CurrentChart()          // 各页把「现在这个盘」放这里，笔读它
 
     var body: some View {
         NavigationStack {
@@ -98,15 +101,28 @@ struct IChingHomeView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .environment(current)
+            .onChange(of: page) { _, _ in current.spec = nil }   // 换页：先清掉，新页面自己再填
+            .overlay(alignment: .topTrailing) {
+                // ⋯ 切换易经类各子术数：放在内容右上角（原来五行颜色的位置）
+                Menu {
+                    ForEach(Page.allCases, id: \.self) { p in
+                        Button(p.rawValue) { page = p }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle").font(.title2).foregroundStyle(.secondary)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("切换：" + Page.allCases.map(\.rawValue).joined(separator: " / "))
+                .padding(.top, 36)
+                .padding(.trailing, 40)
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        ForEach(Page.allCases, id: \.self) { p in
-                            Button(p.rawValue) { page = p }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
+                    SaveChartButton(current: current)          // 笔：存进案例库
                 }
             }
         }

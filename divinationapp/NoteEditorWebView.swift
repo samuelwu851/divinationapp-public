@@ -81,6 +81,16 @@ final class NoteEditorController: NSObject {
         if ready { webView?.evaluateJavaScript("window.noteEditor.setTopInset(\(h))") }
     }
 
+    /// 在笔记里查找（⌘F）：打开网页里的查找框。
+    func openFind() {
+        webView?.evaluateJavaScript("window.noteEditor.openFind()")
+    }
+
+    /// 排盘窗口里改了所问之事 / 特点：正文里这个排盘的卡片重新画。
+    func refreshChart(id: Int) {
+        webView?.evaluateJavaScript("window.noteEditor.refreshChart(\(id))")
+    }
+
     /// 某个标签被彻底删除了：让网页里的排盘卡片也去掉它。
     func labelDeleted(id: Int) {
         webView?.evaluateJavaScript("window.noteEditor.labelDeleted(\(id))")

@@ -3,7 +3,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 数据备份 / 恢复（菜单栏「文件」里的两项）。
+/// 数据备份 / 恢复（菜单栏「数据」菜单里的两项）。
 ///
 /// - 备份：选个位置，把整个案例库（数据库 + 笔记里的图片）存成一个 .zip 文件（后端 casebook/backup.py）。
 /// - 恢复：选一个备份文件 → 先给用户看里面有几篇笔记、什么时候备份的 → 确认后替换全部数据。
@@ -90,13 +90,16 @@ enum CasebookBackup {
     private struct RestoreResult: Decodable { let notes: Int?; let safetyBackup: String? }
 }
 
-/// 菜单栏「文件」里加「备份数据…」「恢复数据…」。
+/// 菜单栏单独一个「数据」菜单：备份数据… / 恢复数据…
+/// （原来想放进「文件」菜单的「存储」后面，但这个 App 没有「存储」这一项，系统就不显示了。）
+/// 菜单跟系统语言走（系统菜单 File / Edit… 也是跟系统语言）：中文系统「数据」，其他「Data」。
 struct CasebookBackupCommands: Commands {
+    private static let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") ?? false
+
     var body: some Commands {
-        CommandGroup(after: .saveItem) {
-            Divider()
-            Button("备份数据…") { CasebookBackup.backup() }
-            Button("恢复数据…") { CasebookBackup.restore() }
+        CommandMenu(Self.chinese ? "数据" : "Data") {
+            Button(Self.chinese ? "备份数据…" : "Back Up Data…") { CasebookBackup.backup() }
+            Button(Self.chinese ? "恢复数据…" : "Restore Data…") { CasebookBackup.restore() }
         }
     }
 }

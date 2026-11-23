@@ -50,9 +50,15 @@ final class CasebookWindowManager {
     }
 
     func registerNotes(_ w: NSWindow) {
+        let firstTime = notes !== w
         notes = w
         w.isRestorable = false
-        observe(w, NSWindow.didMoveNotification) { [weak self] in self?.onNotesMoved() }
+        if firstTime {
+            observe(w, NSWindow.didMoveNotification) { [weak self] in self?.onNotesMoved() }
+            // 关掉笔记窗：解除贴合。SwiftUI 的窗口关掉后对象还在（只是隐藏），
+            // 不解除的话，之后拉主窗 / 放大主窗时 attach 会把它当子窗口重新显示出来——看起来像「自己打开了」
+            observe(w, NSWindow.willCloseNotification) { [weak self] in self?.notesClosed() }
+        }
         attach(to: .right, initial: true)         // 首次出现贴右侧
     }
 
@@ -68,8 +74,16 @@ final class CasebookWindowManager {
     }
 
     /// 把笔记窗设到主窗某侧、等高，并建立父子关系（一起动）。也用于「吸住后拉回」。
+    /// 笔记窗现在是不是开着（关掉的窗口对象还在，只是不显示）。
+    private var notesVisible: Bool { notes?.isVisible == true }
+
+    private func notesClosed() {
+        detach()
+        pairMaximized = false
+    }
+
     private func attach(to s: Side, initial: Bool = false) {
-        guard let m = main, let n = notes else { return }
+        guard let m = main, let n = notes, initial || n.isVisible else { return }   // 关着的笔记窗不去碰它
         side = s
         let width = initial ? defaultNotesWidth : n.frame.width
         let target = NSRect(x: flushX(for: s, width: width), y: m.frame.origin.y,
@@ -95,8 +109,8 @@ final class CasebookWindowManager {
     private func onMainResized() {
         if adjustingMain { return }               // 自己调的，setMain 里会处理
         noteMainFrameChanged()
-        guard attached, let m = main, let n = notes, let vf = m.screen?.visibleFrame else {
-            if attached { attach(to: side) }
+        guard attached, notesVisible, let m = main, let n = notes, let vf = m.screen?.visibleFrame else {
+            if attached && notesVisible { attach(to: side) }
             return
         }
         // 主窗被放大到填满屏幕（双击标题栏「缩放」或「填充」、绿色按钮的缩放）：
@@ -125,7 +139,8 @@ final class CasebookWindowManager {
     private func installZoomProxy(on w: NSWindow) {
         if let proxy = zoomProxy, w.delegate === proxy { return }
         let proxy = ZoomDelegateProxy(original: w.delegate) { [weak self] _, _ in
-            guard let self, self.attached, let n = self.notes, let vf = self.main?.screen?.visibleFrame else { return nil }
+            guard let self, self.attached, self.notesVisible, let n = self.notes,
+                  let vf = self.main?.screen?.visibleFrame else { return nil }   // 笔记窗关着：照常放大主窗
             return self.pairFrame(vf, notesWidth: n.frame.width)
         }
         zoomProxy = proxy                         // window.delegate 是 weak，要自己留着
