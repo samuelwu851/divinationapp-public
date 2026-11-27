@@ -75,7 +75,7 @@ def list_notes(keyword: str = "", label_ids=(), subject_ids=(), shushu_codes=(),
         where.append(f"EXISTS (SELECT 1 FROM charts c WHERE c.note_id = n.id AND c.type = ?{conds})")
         args.append(block["type"])
         for k, v in fields.items():
-            args += [k, v]
+            args += [k.split("#", 1)[0], v]                # pairs 条件 jia#3 → 特征键 jia
     # 预览取纯文字 body_text 的前 40 字，换行替换成空格（char(10) 就是换行符）
     rows = db.get().execute(
         f"""

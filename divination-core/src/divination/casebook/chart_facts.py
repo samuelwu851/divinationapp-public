@@ -2,10 +2,17 @@
 
 每种术数两样东西：
 - 拆特征的函数：快照 → [(key, value), ...]，如八字 ("year_gan", "丙")、("hour_zhi", "戌")、("gender", "male")；
-- 搜索表单：前端照着画。字段有三种样子（style）：
+- 搜索表单：前端照着画。字段有四种样子（style）：
     "menu"   下拉框：选一个值或「不限」
     "checks" 几个互斥的勾选框（如 男 / 女、有变卦 / 没变卦）：勾一个 = 只要这种，都不勾 = 不限
     "number" 直接填整数（如年份，选项太多放不进下拉框）：空着 = 不限；可带 min / max
+    "pairs"  用户自己加的「两项一组」条件，最多 max 组（如六壬「子加寅」「子乘青龙」）：
+             每组左边从 options 选、右边从 options2 选，中间显示 joiner；
+             条件里的键写成「字段键#序号」（jia#1、jia#2…），值是左右两项拼起来（"子寅"），
+             每组都要满足；对应的特征键就是字段键（jia），一张盘可以有很多个值。
+
+一张排盘同一个特征键可以有多个值（如六壬十二个「加临」、课体同时是「涉害」「进连茹」），
+条件里的一个值只要是其中之一就算满足。
 
 搜索条件是一串「条件块」：[{"type": "bazi", "fields": {"year_gan": "丙"}}, {"type": "bazi", "fields": {...}}, ...]
 笔记要有**不同的**排盘分别满足每一块（加了两个八字块，就要有两张八字各自满足），见 service.list_notes。
@@ -21,6 +28,7 @@ api 扫描插件时调 register_many 合并进来（同 CHART_BUILDERS 的做法
 from divination.iching import core as iching_core
 from divination.iching import repository as iching_repo
 from divination.iching.model import Hexagram
+from divination.liuren.core import JIGONG
 
 # 特征的版本：拆法或字段有变化就加一，打开案例库时会给所有排盘重拆
 FACTS_VERSION = "2"
@@ -47,6 +55,17 @@ def _menu(key: str, label: str, options: list[dict]) -> dict:
 
 def _checks(key: str, label: str, options: list[dict]) -> dict:
     return {"key": key, "label": label, "style": "checks", "options": options}
+
+
+def pairs_field(key: str, label: str, left: list[dict], right: list[dict], joiner: str, most: int = 12) -> dict:
+    """两项一组、用户自己加的条件（见文件开头 "pairs"）。"""
+    return {"key": key, "label": label, "style": "pairs", "options": left, "options2": right,
+            "joiner": joiner, "max": most}
+
+
+def fact_key(query_key: str) -> str:
+    """条件里的键 → 特征键：pairs 的「jia#3」→「jia」，其他不变。"""
+    return query_key.split("#", 1)[0]
 
 
 def number_field(key: str, label: str, lo: int | None = None, hi: int | None = None) -> dict:
@@ -120,11 +139,65 @@ _ICHING_FORM = {
 }
 
 
+# ---------- 大六壬 ----------
+
+_JIANG = ["贵人", "螣蛇", "朱雀", "六合", "勾陈", "青龙", "天空", "白虎", "太常", "玄武", "太阴", "天后"]
+# 「贼克」「遥克」是大类：选贼克 = 元首或重审，选遥克 = 蒿矢或弹射（按九宗门的顺序，放在细分的上面）
+# 「三合」= 润下、炎上、曲直、从革（稼穑是辰戌丑未，不算三合）
+_KE_TI_GROUP = {"元首": "贼克", "重审": "贼克", "蒿矢": "遥克", "弹射": "遥克",
+                "润下": "三合", "炎上": "三合", "曲直": "三合", "从革": "三合"}
+_KE_TI = ["贼克", "元首", "重审", "比用", "涉害", "遥克", "蒿矢", "弹射", "昴星", "别责", "八专", "伏吟", "返吟",
+          "进连茹", "退连茹", "进间传", "退间传", "三合", "润下", "炎上", "曲直", "从革", "稼穑"]
+# 四课、三传：(特征键前缀, 显示名)；每个都有「支」和「将」两项
+_LIUREN_POS = [("gs", "干上"), ("gy", "干阴"), ("zs", "支上"), ("zy", "支阴"),
+               ("chu", "初传"), ("zhong", "中传"), ("mo", "末传")]
+
+
+def _liuren_facts(snapshot: dict) -> list[tuple[str, str]]:
+    day = snapshot["day"]
+    facts = [("day_gan", day[0]), ("day_zhi", day[1]), ("ke_ti", snapshot["sanchuan"]["ke_ti"])]
+    # 日干乘将 = 日干寄宫那个支在天盘上所乘的天将；日支乘将 = 日支在天盘上所乘的天将
+    rides = {p["zhi"]: p["jiang"] for p in snapshot["pan"]}
+    facts += [("day_gan_j", rides[JIGONG[day[0]]]), ("day_zhi_j", rides[day[1]])]
+    if (group := _KE_TI_GROUP.get(snapshot["sanchuan"]["ke_ti"])):
+        facts.append(("ke_ti", group))
+    for g in snapshot["sanchuan"].get("ke_ge", []):
+        facts.append(("ke_ti", g))
+        if (group := _KE_TI_GROUP.get(g)):
+            facts.append(("ke_ti", group))
+    places = snapshot["sike"] + snapshot["sanchuan"]["chuan"]
+    for (key, _), p in zip(_LIUREN_POS, places):
+        facts += [(key, p["zhi"]), (f"{key}_j", p["jiang"])]
+    for p in snapshot["pan"]:
+        facts += [("jia", p["zhi"] + p["di"]), ("cheng", p["zhi"] + p["jiang"])]
+    return facts
+
+
+_ZHI_OPTIONS = _options(list(ZHI))
+_JIANG_OPTIONS = _options(_JIANG)
+
+_LIUREN_FORM = {
+    "title": "大六壬",
+    "columns": 2,          # 每行：某位置的「支」和「将」
+    "fields": [_menu("ke_ti", "课体", _options(_KE_TI)),
+               dict(_menu("day_gan", "日干", _options(list(GAN))), group="日"),
+               dict(_menu("day_gan_j", "日干乘将", _JIANG_OPTIONS), group="日"),
+               dict(_menu("day_zhi", "日支", _ZHI_OPTIONS), group="日"),
+               dict(_menu("day_zhi_j", "日支乘将", _JIANG_OPTIONS), group="日")]
+            + [dict(_menu(f"{k}{suffix}", f"{n}{what}", opts), group="四课" if i < 4 else "三传")
+               for i, (k, n) in enumerate(_LIUREN_POS)
+               for suffix, what, opts in (("", "", _ZHI_OPTIONS), ("_j", "将", _JIANG_OPTIONS))]
+            + [pairs_field("jia", "天地盘加临", _ZHI_OPTIONS, _ZHI_OPTIONS, "加"),
+               pairs_field("cheng", "乘神", _ZHI_OPTIONS, _JIANG_OPTIONS, "乘")],
+}
+
+
 # 排盘类型 → {"extract": 拆特征函数, "form": 搜索表单}；顺序就是「＋ 选择术数」菜单里的顺序
 REGISTRY: dict[str, dict] = {
     "bazi": {"extract": _bazi_facts, "form": _BAZI_FORM},
     "iching": {"extract": _iching_facts, "form": _ICHING_FORM},
     "meihua": {"extract": _gua_facts, "form": _MEIHUA_FORM},
+    "daliuren": {"extract": _liuren_facts, "form": _LIUREN_FORM, "version": "3"},   # 1：加了日干 / 日支乘将；2：加了贼克、遥克；3：加了三合
 }
 
 
@@ -172,7 +245,15 @@ def clean_query(blocks) -> list[dict]:
         fields = b.get("fields") or {}
         kept = {}
         for k, v in fields.items():
-            if k not in allowed or v in (None, ""):
+            if v in (None, ""):
+                continue
+            if "#" in k:                                   # pairs：jia#3 → 检查序号和左右两项
+                f = allowed.get(fact_key(k))
+                if f is None or f.get("style") != "pairs" or not _pair_ok(f, k, str(v)):
+                    continue
+                kept[k] = str(v)
+                continue
+            if k not in allowed or allowed[k].get("style") == "pairs":
                 continue
             if allowed[k].get("style") == "number":      # 数字统一成整数写法（"01990" → "1990"），填错的忽略
                 try:
@@ -184,11 +265,25 @@ def clean_query(blocks) -> list[dict]:
     return out
 
 
+def _pair_ok(field: dict, key: str, value: str) -> bool:
+    """pairs 条件：序号在 1..max，值 = 左边某个选项 + 右边某个选项。"""
+    try:
+        n = int(key.split("#", 1)[1])
+    except ValueError:
+        return False
+    if not 1 <= n <= field.get("max", 12):
+        return False
+    lefts = [o["value"] for o in field["options"]]
+    rights = {o["value"] for o in field["options2"]}
+    return any(value.startswith(l) and value[len(l):] in rights for l in lefts)
+
+
 def match_distinct(blocks: list[dict], charts: list[dict]) -> bool:
-    """每个条件块配一张**不同的**排盘（类型相同、特征都对得上）。charts: [{id, type, facts: {key: value}}]。
+    """每个条件块配一张**不同的**排盘（类型相同、特征都对得上）。charts: [{id, type, facts: {key: {值…}}}]。
     条件块很少（几个），直接回溯就够了。"""
     def ok(block, chart):
-        return chart["type"] == block["type"] and all(chart["facts"].get(k) == v for k, v in block["fields"].items())
+        return chart["type"] == block["type"] and all(v in chart["facts"].get(fact_key(k), ())
+                                                      for k, v in block["fields"].items())
 
     used: set[int] = set()
 

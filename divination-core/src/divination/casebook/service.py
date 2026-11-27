@@ -66,7 +66,7 @@ def _match_chart_blocks(notes: list[dict], blocks: list[dict]) -> list[dict]:
     for r in repo.chart_facts_of_notes([n["id"] for n in notes], list({b["type"] for b in blocks})):
         c = by_chart.setdefault(r["chart_id"], {"id": r["chart_id"], "note_id": r["note_id"], "type": r["type"], "facts": {}})
         if r["key"] is not None:
-            c["facts"][r["key"]] = r["value"]
+            c["facts"].setdefault(r["key"], set()).add(r["value"])     # 同一键可能有多个值
     charts_by_note: dict[int, list[dict]] = {}
     for c in by_chart.values():
         charts_by_note.setdefault(c["note_id"], []).append(c)

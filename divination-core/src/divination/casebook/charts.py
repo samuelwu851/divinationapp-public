@@ -9,7 +9,7 @@
 插件也可以加自己的排盘类型：在插件模块里导出 CHART_BUILDERS = {"类型": builder}，
 api 扫描插件时会调 register_builders 合并进来（同 COMMANDS 的做法），这里不用改。
 
-通用卡片：前端只内置了 bazi / iching / meihua 三种卡片的画法。其他类型（如插件）
+通用卡片：前端内置了 bazi / iching / meihua / daliuren 四种卡片的画法。其他类型（如插件）
 在快照里带一段 "card"，前端照着画，不用为每种新类型改编辑器：
     "card": {
         "title": "卡片抬头（术数名）",
@@ -21,6 +21,7 @@ from datetime import datetime
 
 from divination.bazi import service as bazi_service
 from divination.iching import service as iching_service
+from divination.liuren import service as liuren_service
 from divination.meihua import service as meihua_service
 
 # 排盘算法版本：算法有不兼容修改时加一，便于以后知道某个快照是哪一版算的
@@ -72,10 +73,17 @@ def _meihua(p: dict) -> tuple[str, dict]:
     }
 
 
+def _daliuren(p: dict) -> tuple[str, dict]:
+    """参数同 liuren_paipan 命令（date、method、shi、yuejiang、day_night、nianming）；
+    快照就是排盘结果整份（三传四课、天地盘、年命、神煞都在里面）。类型名 daliuren 同术数清单的 code。"""
+    return "", liuren_service.paipan(p)
+
+
 BUILDERS = {
     "bazi": _bazi,
     "iching": _iching,
     "meihua": _meihua,
+    "daliuren": _daliuren,
 }
 
 

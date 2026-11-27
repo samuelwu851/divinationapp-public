@@ -13,6 +13,8 @@ from divination.ganzhi import service as ganzhi_service
 from divination.meihua import service as meihua_service
 from divination.bazi import service as bazi_service
 from divination.casebook import service as casebook_service
+from divination.shensha import service as shensha_service
+from divination.liuren import service as liuren_service
 from divination.casebook import charts as casebook_charts
 from divination.casebook import shushu as casebook_shushu
 from divination.casebook import chart_facts as casebook_chart_facts
@@ -21,7 +23,7 @@ from divination import plugins
 import importlib
 import pkgutil
 
-_SERVICES = (iching_service, ganzhi_service, meihua_service, bazi_service, casebook_service)
+_SERVICES = (iching_service, ganzhi_service, meihua_service, bazi_service, casebook_service, shensha_service, liuren_service)
 
 _HANDLERS: dict = {}
 for _module in _SERVICES:
