@@ -55,6 +55,21 @@ struct ChartQueryBlock: Identifiable, Equatable {
     let id = UUID()
     let type: String
     var fields: [String: String] = [:]
+    /// pairs 字段（如六壬「天地盘加临」）界面上的一行行；只有左右都选了的行才写进 fields（键 `jia#1`、`jia#2`…）。
+    var pairRows: [String: [PairRow]] = [:]
+
+    struct PairRow: Identifiable, Equatable {
+        let id = UUID()
+        var left = ""
+        var right = ""
+    }
+
+    /// 把某个 pairs 字段的行重新写进 fields：先删掉旧的 `key#n`，再按顺序给填完整的行编号。
+    mutating func syncPairs(_ key: String) {
+        fields = fields.filter { !$0.key.hasPrefix(key + "#") }
+        let done = (pairRows[key] ?? []).filter { !$0.left.isEmpty && !$0.right.isEmpty }
+        for (i, r) in done.enumerated() { fields["\(key)#\(i + 1)"] = r.left + r.right }
+    }
 }
 
 /// 按排盘搜索的面板（后端 chart_search_forms 给）：每种术数一组下拉框。
@@ -68,9 +83,13 @@ struct ChartSearchForm: Codable, Identifiable {
         var min: Int? = nil               // number 字段的范围（可没有）
         var max: Int? = nil
         var group: String? = nil          // 分组小标题（如「公历」「农历」）：相邻的同组字段排在一起，组上面显示小标题
+        var options2: [Option]? = nil     // pairs 字段右边的选项（左边用 options）
+        var joiner: String? = nil         // pairs 两项中间显示的字，如「加」「乘」
         var id: String { key }
         var isChecks: Bool { style == "checks" }
         var isNumber: Bool { style == "number" }
+        /// "pairs"：用户自己一行行加「左 + 右」的条件（如 子加寅、子乘青龙），最多 max 行，每行都要满足。
+        var isPairs: Bool { style == "pairs" }
     }
     let type: String
     let title: String

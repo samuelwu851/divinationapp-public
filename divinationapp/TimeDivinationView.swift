@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// 梅花易数页：时间起卦 / 数字起卦 / 指定起卦（见 MeihuaMethod.swift）。不用 store：本地 @State 即可——每次从菜单进来都是全新实例，自动回到选时间页。
+/// 梅花易数页：时间起卦 / 数字起卦 / 指定起卦（见 MeihuaMethod.swift）。内容存在 PageStates 里：切走再回来，排好的盘还在。
 /// 选时间：公历或农历；日期(年/月/日)、时间(时/分) 用跨平台滚轮 WheelPicker 滚动选择（年份也可输入）。
 /// 农历先请后端换成公历，再走原来的命令。
 /// 排盘：meihua 定本卦/动爻/变卦，bazi_pillars（bazi 包）给左上角八字/公历/农历，lookup 取两卦完整数据，yilin 取崔氏易林，cangua 取参卦。
 struct TimeDivinationView: View {
-    @State private var date = DateInputModel(years: 1950...2060, initial: .now())
-    @State private var input = MeihuaInput()          // 起卦法 + 数字 / 指定的卦
-    @State private var timeSource: TimeSource = .solar
-    @State private var pickedTime: DateParts?         // 四柱反推选中的时刻
-
-    @State private var result: PaipanResult?
-    @State private var errorMessage: String?
+    /// 内容存在页面外面（PageStates），切到别的术数再回来还在。
+    @Bindable var s: MeihuaPageState
+    private var date: DateInputModel { get { s.date } nonmutating set { s.date = newValue } }
+    private var input: MeihuaInput { get { s.input } nonmutating set { s.input = newValue } }
+    private var timeSource: TimeSource { get { s.timeSource } nonmutating set { s.timeSource = newValue } }
+    private var pickedTime: DateParts? { get { s.pickedTime } nonmutating set { s.pickedTime = newValue } }
+    private var result: PaipanResult? { get { s.result } nonmutating set { s.result = newValue } }
+    private var errorMessage: String? { get { s.errorMessage } nonmutating set { s.errorMessage = newValue } }
     @State private var showDatePicker = false   // 日期滚轮浮窗
     @State private var showTimePicker = false   // 时间滚轮浮窗
 
@@ -46,7 +47,7 @@ struct TimeDivinationView: View {
         VStack(spacing: 24) {
             Text("梅花易数").font(.largeTitle).bold()
 
-            Picker("", selection: $input.method) {
+            Picker("", selection: $s.input.method) {
                 ForEach(MeihuaMethod.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
@@ -54,7 +55,7 @@ struct TimeDivinationView: View {
             .frame(maxWidth: 360)
 
             if input.method != .time {
-                MeihuaManualInput(input: $input)
+                MeihuaManualInput(input: $s.input)
             }
             // 时间：时间起卦用来起卦；数字 / 指定起卦只用来排八字
             Text(input.method == .time ? "起卦时间" : "时间（只用来排八字）")
@@ -83,7 +84,7 @@ struct TimeDivinationView: View {
     /// 时间：公历 / 农历（日期、时间两行，点开滚轮），或按四柱反推选一个时刻。
     @ViewBuilder
     private var timeInput: some View {
-        TimeSourceSwitch(source: $timeSource, date: date)
+        TimeSourceSwitch(source: $s.timeSource, date: date)
         if timeSource == .pillars {
             PillarsReverseInput(client: client, pickTitle: "点一个作为时间：") { t in
                 pickedTime = t

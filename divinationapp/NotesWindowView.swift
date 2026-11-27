@@ -71,10 +71,12 @@ struct NotesWindowView: View {
                 reload()
             }
             #endif
-            #if os(macOS)
-            .background(NotesWindowAccessor())         // 注册到窗口管理器（贴合主窗）
-            #endif
         }
+        #if os(macOS)
+        // 注册到窗口管理器（贴合主窗）。挂在 NavigationStack 外面：从排盘页「存进案例库」打开时
+        // 一上来就推进了编辑器，列表页可能根本没放进窗口，挂在列表页上就注册不到、贴不上
+        .background(NotesWindowAccessor())
+        #endif
         .frame(minWidth: Self.minWidth)                 // 编辑器 / 案主页推进来也不能再窄
     }
 
@@ -215,7 +217,9 @@ struct NotesWindowView: View {
     private func openPending() {
         guard let spec = CasebookOpener.shared.pending else { return }
         CasebookOpener.shared.pending = nil
-        path = [.editor(.newWithChart(spec))]
+        // 推到下一轮：窗口刚打开、列表页还在第一次出现时就改 path，编辑器会被 SwiftUI 先出现、消失、
+        // 再出现一次；消失那次走了 finish（拆掉网页编辑器的连接），之后「插入排盘」就一直说光标不在正文里
+        DispatchQueue.main.async { path = [.editor(.newWithChart(spec))] }
     }
 }
 
@@ -692,6 +696,7 @@ private struct BlockCard: View {
                     }
                 }
             }
+            ForEach(form.fields.filter(\.isPairs)) { field in pairs(field) }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -710,7 +715,7 @@ private struct BlockCard: View {
     /// 非勾选的字段按 group 分组（相邻的同组字段放一起，保持表单里的顺序）。
     private var groups: [(title: String?, fields: [ChartSearchForm.Field])] {
         var out: [(title: String?, fields: [ChartSearchForm.Field])] = []
-        for f in form.fields where !f.isChecks {
+        for f in form.fields where !f.isChecks && !f.isPairs {
             if let last = out.last, last.title == f.group {
                 out[out.count - 1].fields.append(f)
             } else {
@@ -734,6 +739,55 @@ private struct BlockCard: View {
                 .toggleStyle(.checkbox)
             }
         }
+    }
+
+    /// pairs 条件：一行一个「左 [加] 右」，＋ 加一行（最多 max 行），⊖ 删掉这一行。左右都选了才算数。
+    private func pairs(_ field: ChartSearchForm.Field) -> some View {
+        let rows = block.pairRows[field.key] ?? []
+        let limit = field.max ?? 12
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(field.label).font(.caption).bold().foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    block.pairRows[field.key, default: []].append(.init())
+                } label: { Image(systemName: "plus.circle") }
+                .buttonStyle(.plain)
+                .disabled(rows.count >= limit)
+                .help(rows.count >= limit ? "最多 \(limit) 条" : "加一条")
+            }
+            ForEach(rows) { row in
+                HStack(spacing: 6) {
+                    pairPicker(field.options, value: row.left) { v in updateRow(field.key, row.id) { $0.left = v } }
+                    Text(field.joiner ?? "").foregroundStyle(.secondary)
+                    pairPicker(field.options2 ?? [], value: row.right) { v in updateRow(field.key, row.id) { $0.right = v } }
+                    Spacer()
+                    Button {
+                        block.pairRows[field.key]?.removeAll { $0.id == row.id }
+                        block.syncPairs(field.key)
+                    } label: { Image(systemName: "minus.circle").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+                    .help("去掉这一条")
+                }
+            }
+        }
+    }
+
+    private func pairPicker(_ options: [ChartSearchForm.Option], value: String,
+                            set: @escaping (String) -> Void) -> some View {
+        Picker("", selection: Binding(get: { value }, set: set)) {
+            Text("—").tag("")
+            ForEach(options, id: \.value) { o in Text(o.label).tag(o.value) }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
+    }
+
+    private func updateRow(_ key: String, _ id: UUID, _ change: (inout ChartQueryBlock.PairRow) -> Void) {
+        guard let i = block.pairRows[key]?.firstIndex(where: { $0.id == id }) else { return }
+        change(&block.pairRows[key]![i])
+        block.syncPairs(key)
     }
 
     private func menu(_ field: ChartSearchForm.Field) -> some View {

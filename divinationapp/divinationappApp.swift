@@ -14,6 +14,7 @@ struct divinationappApp: App {
         Self.bootstrapPython()
         Self.testDispatch()        // 里程碑 1 自检（走通用分发器）
         Self.openCasebook()        // 打开案例库数据库
+        LiurenChartKind.register() // 笔记里可插入大六壬
     }
 
     var body: some Scene {

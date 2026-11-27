@@ -188,6 +188,39 @@ function head(...parts) {
   return h
 }
 
+// ---------- 大六壬卡片：左边四课（从右往左一二三四；将 / 上 / 下），右边三传（六亲 遁干 支 将） ----------
+const JIANG = {
+  贵人: ['贵', 'earth'], 勾陈: ['勾', 'earth'], 天空: ['空', 'earth'], 太常: ['常', 'earth'],
+  螣蛇: ['蛇', 'fire'], 朱雀: ['朱', 'fire'], 六合: ['合', 'wood'], 青龙: ['龙', 'wood'],
+  白虎: ['虎', 'metal'], 太阴: ['阴', 'metal'], 玄武: ['玄', 'water'], 天后: ['后', 'water'],
+}
+const QIN = { 父母: '父', 兄弟: '兄', 子孙: '子', 妻财: '财', 官鬼: '官' }
+
+function jiangChar(j) {
+  const [short, wx] = JIANG[j] || [j || '', null]
+  const s = el('span', 'gz', short)
+  if (wx) s.style.color = `var(--wx-${wx})`
+  return s
+}
+
+function liurenBody(s) {
+  const box = el('div', 'lr-card')
+  const chuan = el('div', 'lr-chuan')
+  for (const c of s.sanchuan?.chuan || []) {
+    const zhi = ganzhiChar(c.zhi)
+    if (c.kong) zhi.classList.add('lr-kong')
+    chuan.append(el('span', 'lr-qin', QIN[c.qin] || c.qin), c.dun ? ganzhiChar(c.dun) : el('span', 'gz', '　'),
+                 zhi, jiangChar(c.jiang))
+  }
+  const ke = el('div', 'lr-ke')
+  const order = [3, 2, 1, 0].map(i => (s.sike || [])[i]).filter(Boolean)
+  for (const k of order) ke.append(jiangChar(k.jiang))
+  for (const k of order) ke.append(ganzhiChar(k.zhi))
+  for (const k of order) ke.append(ganzhiChar(k.down || ''))
+  box.append(ke, el('div', 'lr-sep'), chuan)   // 四课在左，三传在右，中间一条细竖线
+  return box
+}
+
 function renderCard(dom, chart) {
   const s = chart.snapshot || {}
   const body = []
@@ -205,6 +238,8 @@ function renderCard(dom, chart) {
     body.push(head('易经速查'), guaPair(s.original, s.changed))
   } else if (chart.type === 'meihua') {
     body.push(head('梅花易数', (s.bazi?.input_time || '').slice(0, 16) || meihuaMethodText(s.qigua)), guaPair(s.original, s.changed))
+  } else if (chart.type === 'daliuren') {
+    body.push(head('大六壬', `${s.day}日 ${s.shi}时 ${s.yuejiang}将`, s.sanchuan?.ke_ti), liurenBody(s))
   } else if (s.card) {
     const c = s.card
     body.push(head(c.title || '排盘', c.subtitle), guaRow(c.guas))

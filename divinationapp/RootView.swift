@@ -9,19 +9,23 @@ struct MainView: View {
     enum Section: String, CaseIterable {
         case iching = "易经"
         case bazi   = "八字"
+        case liuren = "六壬"
     }
 
     @State private var section: Section = .iching
+    @State private var pages = PageStates()          // 各页面的内容：切走再切回来，排好的盘还在
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
 
     var body: some View {
         VStack(spacing: 0) {
+            // 同一时间只放一个页面（一套导航）；内容在 pages 里，切回来照样在
             Group {
                 switch section {
-                case .iching: IChingHomeView()
-                case .bazi:   BaziView()
+                case .iching: IChingHomeView(pages: pages)
+                case .bazi:   BaziView(s: pages.bazi)
+                case .liuren: LiurenView(s: pages.liuren)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -82,22 +86,28 @@ struct MainView: View {
 /// 易经类主页：默认进「易经速查」。
 /// - 窗口右上角（工具栏）：笔 = 把现在这个盘存进案例库（新建笔记）；
 /// - 内容右上角：⋯ 菜单切换易经类各子术数（五行颜色、变卦模式这些开关放在内容左上角）。
-/// 用 switch 选择页面——切走再切回「梅花易数」时会重建视图、@State 自动归零。
+/// 用 switch 选择页面：切走的页面会销毁，但内容（梅花的盘、停在哪个子页）存在 PageStates 里，切回来还在；
+/// 易经速查的卦本来就存在本机设置里。
 struct IChingHomeView: View {
     enum Page: String, CaseIterable {
         case iching  = "易经速查"
         case time    = "梅花易数"
     }
 
-    @State private var page: Page = .iching
+    @Bindable var pages: PageStates
     @State private var current = CurrentChart()          // 各页把「现在这个盘」放这里，笔读它
+
+    private var page: Page {
+        get { pages.ichingPage }
+        nonmutating set { pages.ichingPage = newValue }
+    }
 
     var body: some View {
         NavigationStack {
             Group {
                 switch page {
                 case .iching:  ContentView()
-                case .time:    TimeDivinationView()
+                case .time:    TimeDivinationView(s: pages.meihua)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

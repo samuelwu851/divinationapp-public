@@ -202,7 +202,7 @@ struct NoteEditorView: View {
             if let n = client.noteCreate(title: "", body: "") {
                 noteId = n.id
                 createdHere = true
-                if let cid = client.chartCreate(noteId: n.id, type: spec.type, params: spec.params) {
+                if let cid = client.chartCreate(noteId: n.id, type: spec.type, params: spec.params, question: spec.question) {
                     let doc: [String: Any] = ["type": "doc", "content": [
                         ["type": "chart", "attrs": ["id": cid]],
                         ["type": "paragraph"],

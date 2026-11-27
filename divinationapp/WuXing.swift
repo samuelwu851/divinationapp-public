@@ -9,7 +9,7 @@ enum WuXing {
         case .wood:  return .green
         case .fire:  return .red
         case .earth: return Color(red: 0.55, green: 0.35, blue: 0.15)  // 咖啡色
-        case .metal: return .yellow
+        case .metal: return Color(red: 0.88, green: 0.54, blue: 0.0)   // 琥珀色（原来的纯黄在白底上看不清）
         case .water: return .blue
         }
     }

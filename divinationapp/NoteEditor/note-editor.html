@@ -19,7 +19,7 @@
     --c-red: #c62828; --c-orange: #e65100; --c-yellow: #a07800; --c-green: #2e7d32;
     --c-blue: #1565c0; --c-purple: #6a1b9a; --c-gray: #757575; --hl: #fff3a0;
     /* 五行色：与 WuXing.swift 一致 */
-    --wx-wood: #34c759; --wx-fire: #ff3b30; --wx-earth: #8c5926; --wx-metal: #ffcc00; --wx-water: #007aff;
+    --wx-wood: #34c759; --wx-fire: #ff3b30; --wx-earth: #8c5926; --wx-metal: #e08a00; --wx-water: #007aff;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: transparent; color: var(--fg);
@@ -144,6 +144,14 @@
   .pillar { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .pillar .lbl { font-size: 12px; color: var(--secondary); margin-bottom: 2px; }
   .pillar .gz { font-size: 28px; font-weight: 700; line-height: 1.15; }
+  /* 大六壬：四课（4 列 3 行）在左、三传（4 列）在右并排；空亡的传加框；六亲字号单独定，不跟着干支变 */
+  .lr-card { display: flex; justify-content: center; align-items: center; gap: 18px; }
+  .lr-sep { width: 1px; align-self: stretch; margin: 3px 0; background: color-mix(in srgb, var(--secondary) 35%, transparent); }   /* 四课、三传中间的细竖线：跟着内容拉满高度，上下各缩一点 */
+  .lr-chuan { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 12px; align-items: center; }
+  .lr-ke { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 14px; }
+  .lr-card .gz { font-size: 20px; font-weight: 700; line-height: 1.2; text-align: center; }
+  .lr-qin { font-size: 15px; color: var(--secondary); }
+  .lr-kong { outline: 1.5px solid color-mix(in srgb, var(--secondary) 55%, transparent); outline-offset: 1px; border-radius: 3px; }
   /* 易经 / 梅花：卦名 + 小卦图（同 MiniHexagram：阳爻一整条，阴爻两段） */
   .gua-pair { display: flex; justify-content: center; align-items: center; gap: 30px; }   /* 30：给本卦动爻旁的 → 留位置 */   /* 标题行比卦象宽时，卦象在卡片里居中 */
   .gua-row { display: flex; justify-content: center; align-items: flex-start; gap: 18px; }   /* 通用卡片：一排卦，无动爻 */

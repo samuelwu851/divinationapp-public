@@ -11,12 +11,15 @@ struct ChartSaveSpec: Hashable {
     let id = UUID()
     let type: String
     let paramsJSON: String
+    /// 所问之事（如六壬起课时填的占事）：存成这张排盘的所问之事；没有就空着。
+    var question = ""
 
-    init?(type: String, params: [String: Any]) {
+    init?(type: String, params: [String: Any], question: String = "") {
         guard let data = try? JSONSerialization.data(withJSONObject: params),
               let json = String(data: data, encoding: .utf8) else { return nil }
         self.type = type
         self.paramsJSON = json
+        self.question = question
     }
 
     var params: [String: Any] {

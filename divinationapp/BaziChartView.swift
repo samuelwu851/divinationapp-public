@@ -89,10 +89,10 @@ struct BaziChartView: View {
         }
     }
 
-    /// 起运 / 交运：放在八字与大运列表之间，黑色、与「乾造」同大小。
+    /// 起运 / 交运：放在八字与大运列表之间，黑色；比「乾造」小 4pt（macOS 上 title2 17pt → body 13pt）。
     private var qiyunLine: some View {
         Text("起运：\(chart.qiyun.years)岁\(chart.qiyun.months)月\(chart.qiyun.days)日　\(chart.jiaoyun.text)")
-            .font(.title2).foregroundStyle(.primary)
+            .font(.body).foregroundStyle(.primary)
     }
 
     // MARK: - 上方：彩色排盘（四柱 + 选中的大运/流年/流月）
@@ -108,6 +108,7 @@ struct BaziChartView: View {
             coloredPillar("时柱", chart.pillars.hour.ganShishen, chart.pillars.hour.ganzhi,
                           chart.pillars.hour.canggan, chart.pillars.hour.nayin)
             if let dy = selectedDaYun {
+                pillarSeparator                  // 四柱和大运之间的竖线
                 coloredPillar("大运", dy.ganShishen, dy.ganzhi, dy.canggan, dy.nayin)
             }
             if let ln = selectedLiuNian {
@@ -117,7 +118,22 @@ struct BaziChartView: View {
                 coloredPillar("流月", ly.ganShishen, ly.ganzhi, ly.canggan, ly.nayin)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)   // 整排高度 = 最高那根柱，竖线才能拉满
         .frame(maxWidth: .infinity)   // 整组柱水平居中，减少右侧留白
+    }
+
+    /// 时柱和大运之间的竖线：从表头一直到藏干为止（不到纳音）。
+    /// 下面垫一个看不见的纳音行（字号、间距和柱里一样），竖线就正好停在藏干底下。
+    private var pillarSeparator: some View {
+        VStack(spacing: 6) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.35))
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .padding(.bottom, 6)             // 比藏干底再短一点
+            Text(" ").font(.body).hidden()
+        }
+        .padding(.horizontal, 4)
     }
 
     /// 一根彩色柱：表头(不加粗) + 主星十神(黑、略大) + 天干/地支(五行色大字) +

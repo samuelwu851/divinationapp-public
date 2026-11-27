@@ -5,19 +5,16 @@ import SwiftUI
 ///   农历先请后端换成公历，再走 bazi_chart。
 /// - 按八字反推：选年月日时四柱的干支 →「查找时间」列出公元 1–2200 年里对得上的时刻 → 点一个排盘。
 struct BaziView: View {
-    @State private var name = ""
-    @State private var isMale = true
-
-    // 出生时间（公历 / 农历）
-    @State private var date = DateInputModel(years: HistoricalCalendar.baziYears, initial: .now())
-    @State private var birth: Birth?                   // 排盘用的公历时刻（农历已换算）
-
-    @State private var chart: BaziChart?
-    @State private var showChart = false
-    @State private var errorMessage: String?
-
-    // 按八字反推
-    @State private var byPillars = false
+    /// 内容存在页面外面（PageStates），切到别的术数再回来还在。
+    @Bindable var s: BaziPageState
+    private var name: String { get { s.name } nonmutating set { s.name = newValue } }
+    private var isMale: Bool { get { s.isMale } nonmutating set { s.isMale = newValue } }
+    private var date: DateInputModel { get { s.date } nonmutating set { s.date = newValue } }
+    private var birth: Birth? { get { s.birth } nonmutating set { s.birth = newValue } }
+    private var chart: BaziChart? { get { s.chart } nonmutating set { s.chart = newValue } }
+    private var showChart: Bool { get { s.showChart } nonmutating set { s.showChart = newValue } }
+    private var errorMessage: String? { get { s.errorMessage } nonmutating set { s.errorMessage = newValue } }
+    private var byPillars: Bool { get { s.byPillars } nonmutating set { s.byPillars = newValue } }
 
     private let client = DivinationClient()
 
@@ -31,7 +28,7 @@ struct BaziView: View {
                     // 姓名 + 性别 同一行
                     HStack(spacing: 16) {
                         Text("姓名").font(.title3)
-                        TextField("请输入姓名", text: $name)
+                        TextField("请输入姓名", text: $s.name)
                             .textFieldStyle(.plain)
                             .font(.title3)
                             .padding(.horizontal, 14)
@@ -40,7 +37,7 @@ struct BaziView: View {
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.25)))
                             .frame(width: 200)
 
-                        Picker("", selection: $isMale) {
+                        Picker("", selection: $s.isMale) {
                             Text("男").tag(true)
                             Text("女").tag(false)
                         }
@@ -48,7 +45,7 @@ struct BaziView: View {
                         .frame(width: 130)
                     }
 
-                    Picker("", selection: $byPillars) {
+                    Picker("", selection: $s.byPillars) {
                         Text("按时间排盘").tag(false)
                         Text("按八字反推").tag(true)
                     }
@@ -82,7 +79,7 @@ struct BaziView: View {
                 .padding(40)
                 .frame(maxWidth: .infinity)
             }
-            .navigationDestination(isPresented: $showChart) {
+            .navigationDestination(isPresented: $s.showChart) {
                 if let chart, let birth {
                     BaziChartView(chart: chart, name: name, birth: birth)
                 }
