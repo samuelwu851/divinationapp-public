@@ -136,9 +136,9 @@ struct ChartDetailView: View {
         meta.map { ChartAnnotationView(client: client, chartId: chartId, question: $0.title, tags: $0.tags ?? []) }
     }
 
-    private struct Meta: Decodable { let title: String; let tags: [ChartTag]? }
+    struct Meta: Decodable { let title: String; let tags: [ChartTag]? }   // 导出 PDF 也用
 
-    private static func loadMeta(_ data: Data?) -> Meta? {
+    static func loadMeta(_ data: Data?) -> Meta? {
         guard let data else { return nil }
         return try? JSONDecoder().decode(Meta.self, from: data)
     }
@@ -201,7 +201,7 @@ struct ChartDetailView: View {
         }
     }
 
-    private static func load(_ data: Data?) -> Loaded {
+    static func load(_ data: Data?) -> Loaded {
         guard let data else { return .missing }
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase

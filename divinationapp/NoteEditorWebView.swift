@@ -62,6 +62,12 @@ final class NoteEditorController: NSObject {
         return try? await webView.evaluateJavaScript("window.noteEditor.getJSON()") as? String
     }
 
+    /// 正文 HTML（导出 PDF 用）。
+    func currentHTML() async -> String? {
+        guard let webView else { return nil }
+        return try? await webView.evaluateJavaScript("window.noteEditor.getHTML()") as? String
+    }
+
     /// 光标是否在正文里（插入排盘前检查）。
     func cursorInBody() async -> Bool {
         guard let webView, ready else { return false }

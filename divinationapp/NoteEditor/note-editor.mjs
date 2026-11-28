@@ -3,6 +3,7 @@
 // 与宿主（Swift）的约定：
 //   宿主 → 页面：window.noteEditor.init({noteId, content, accent, assetBase})
 //                window.noteEditor.getJSON()        → 正文 JSON 字符串（保存时取）
+//                window.noteEditor.getHTML()        → 正文 HTML（导出 PDF 时取）
 //                window.noteEditor.cursorInBody()   → 光标是否在正文（「插入排盘」前检查）
 //                window.noteEditor.insertChart(id)  → 在光标处插入排盘卡片
 //   页面 → 宿主：host.call(cmd, params)  → Promise，转发给后端命令（chart_get / attachment_add）
@@ -750,6 +751,11 @@ window.noteEditor = {
   /** 当前正文的 JSON 字符串（保存时由宿主取走）。 */
   getJSON() {
     return editor ? JSON.stringify(editor.getJSON()) : ''
+  },
+
+  /** 当前正文的 HTML（导出 PDF 用）：排盘是 <div data-chart-id="N">，图片 src 还是 attachment:文件名，由宿主替换。 */
+  getHTML() {
+    return editor ? editor.getHTML() : ''
   },
 
   /** 光标是否在正文里（宿主点「插入排盘」前先问）。 */

@@ -11,6 +11,8 @@ struct LiurenChartView: View {
     var question = ""
     /// 嵌在案例库详情窗口里：外面已经有滚动，这里不再包 ScrollView。
     var embedded = false
+    /// 导出 PDF 时为 true：换成专门的小版式（exportContent）。
+    @Environment(\.chartExporting) private var exporting
     /// 前后时辰的按钮（起课页给；案例库详情里没有）。
     var timeStep: LiurenTimeStep? = nil
     @AppStorage(LiurenSideItems.storageKey) private var sideItems = ""
@@ -19,7 +21,9 @@ struct LiurenChartView: View {
 
     var body: some View {
         Group {
-            if embedded {
+            if exporting {
+                exportContent                    // 导出 PDF：专门的小版式
+            } else if embedded {
                 content
             } else {
                 ScrollView { content }.navigationTitle("大六壬")
@@ -184,7 +188,11 @@ struct LiurenChartView: View {
     }
 
     private var sanChuan: some View {
-        Grid(horizontalSpacing: 18, verticalSpacing: 10) {
+        sanChuanGrid(font: .title, hs: 18, vs: 10, markWidth: 56).padding(.leading, 76)   // 三传主体稍微靠右，和四课、天地盘看起来对齐
+    }
+
+    private func sanChuanGrid(font: Font, hs: CGFloat, vs: CGFloat, markWidth: CGFloat) -> some View {
+        Grid(horizontalSpacing: hs, verticalSpacing: vs) {
             ForEach(Array(r.sanchuan.chuan.enumerated()), id: \.offset) { _, c in
                 GridRow {
                     Text(tc(Liuren.qinShort(c.qin))).foregroundStyle(.secondary)
@@ -192,34 +200,37 @@ struct LiurenChartView: View {
                     zhi(c.zhi, kong: c.kong)
                     jiang(c.jiang)
                     Text(kongMarks(c)).foregroundStyle(.secondary)
-                        .frame(width: 56, alignment: .leading)
+                        .frame(width: markWidth, alignment: .leading)
                         .help("◎ 空亡　⊙ 陷空（所临地盘落空）")
                 }
             }
         }
-        .font(.title)
-        .padding(.leading, 76)          // 比右边标记列宽一点，三传主体稍微靠右，和四课、天地盘看起来对齐
+        .font(font)
     }
 
     // MARK: - 四课：从右往左一二三四；天将 / 上神 / 下神（不标空亡）
 
-    private var siKe: some View {
-        Grid(horizontalSpacing: 22, verticalSpacing: 10) {
+    private var siKe: some View { siKeGrid(font: .title, hs: 22, vs: 10) }
+
+    private func siKeGrid(font: Font, hs: CGFloat, vs: CGFloat) -> some View {
+        Grid(horizontalSpacing: hs, verticalSpacing: vs) {
             GridRow { ForEach([3, 2, 1, 0], id: \.self) { jiang(r.sike[$0].jiang) } }
             GridRow { ForEach([3, 2, 1, 0], id: \.self) { zhi(r.sike[$0].zhi, kong: false) } }
             GridRow { ForEach([3, 2, 1, 0], id: \.self) { colored(r.sike[$0].down ?? "") } }
         }
-        .font(.title)
+        .font(font)
     }
 
     // MARK: - 天地盘
 
     /// 8×8 排字：第 2–5 列 / 行是四边的天盘，外两圈是天将、遁干。
     /// 上边对地盘 巳午未申，下边 寅丑子亥，左边 辰卯，右边 酉戌。
-    private var tianDiPan: some View {
+    private var tianDiPan: some View { tianDiPanGrid(font: .title, keTiFont: .title3, hs: 14, vs: 8) }
+
+    private func tianDiPanGrid(font: Font, keTiFont: Font, hs: CGFloat, vs: CGFloat) -> some View {
         let top = ["巳", "午", "未", "申"]
         let bottom = ["寅", "丑", "子", "亥"]
-        return Grid(horizontalSpacing: 14, verticalSpacing: 8) {
+        return Grid(horizontalSpacing: hs, verticalSpacing: vs) {
             GridRow { blank(2); ForEach(top, id: \.self) { dunAt($0) }; blank(2) }
             GridRow { blank(2); ForEach(top, id: \.self) { jiangAt($0) }; blank(2) }
             GridRow { blank(2); ForEach(top, id: \.self) { zhiAt($0) }; blank(2) }
@@ -229,9 +240,9 @@ struct LiurenChartView: View {
             GridRow { blank(2); ForEach(bottom, id: \.self) { jiangAt($0) }; blank(2) }
             GridRow { blank(2); ForEach(bottom, id: \.self) { dunAt($0) }; blank(2) }
         }
-        .font(.title)
+        .font(font)
         .overlay {                                   // 课体放在整个天地盘的正中
-            Text(tc(r.sanchuan.keTi)).font(.title3).foregroundStyle(.secondary)
+            Text(tc(r.sanchuan.keTi)).font(keTiFont).foregroundStyle(.secondary)
         }
     }
 
@@ -251,6 +262,78 @@ struct LiurenChartView: View {
     @ViewBuilder
     private func blank(_ n: Int) -> some View {
         ForEach(0..<n, id: \.self) { _ in Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
+    }
+
+    // MARK: - 导出 PDF 的版式
+
+    /// 导出 PDF 用：A4 正文宽（约 511pt）、高约 1/4–1/3 页。
+    /// 顶上一行四柱和时将；下面三栏：左栏（月将、旬空…）+ 年命 ｜ 三传、四课 ｜ 天地盘。
+    private var exportContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 16) {
+                let pillars = [r.input.year, r.input.month, r.input.day, r.input.hour]
+                if pillars.allSatisfy({ $0 != nil }) {
+                    BaziPillarsView(pillars: pillars.compactMap { $0 }, charFont: .system(size: 15))
+                } else {
+                    HStack(spacing: 3) { colored(r.day).font(.system(size: 15)); Text(tc("日")).font(.system(size: 12)) }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 3) {
+                        colored(r.shi); Text(tc("时"))
+                        Text("·").foregroundStyle(.secondary)
+                        colored(r.yuejiang); Text(tc("将"))
+                        if let qi = r.input.qi { Text("（\(tc(qi))）").foregroundStyle(.secondary) }
+                    }
+                    .font(.system(size: 12))
+                    Text(tc("\(r.dayNight)贵（\(r.guiren == "alt" ? "甲(戊)庚牛羊" : "甲戊庚牛羊")） · \(r.method == "mzj" ? "孟仲季法" : "深浅法")"))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(alignment: .top, spacing: 0) {
+                Spacer(minLength: 0)
+                // 三传四课和天地盘按最后一行的基线对齐：天地盘最下面的遁干和四课最下面一行齐平
+                // 天地盘比三传四课高：三传四课跟着往下，最后一行和天地盘齐平
+                HStack(alignment: .lastTextBaseline, spacing: 28) {
+                    tianDiPanGrid(font: .system(size: 14), keTiFont: .system(size: 11), hs: 6, vs: 4)   // 天地盘在左
+                    VStack(alignment: .leading, spacing: 16) {                                         // 三传四课在右
+                        sanChuanGrid(font: .system(size: 16), hs: 9, vs: 5, markWidth: 22)
+                            .padding(.leading, 14)          // 三传比四课稍微靠右
+                        siKeGrid(font: .system(size: 16), hs: 12, vs: 5)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            if !r.nianming.isEmpty { exportNianming }
+        }
+    }
+
+    /// 导出版的年命：放在三传四课、天地盘下面，横排，最多 7 个。
+    private var exportNianming: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(Array(r.nianming.prefix(7).enumerated()), id: \.offset) { i, m in
+                    if i > 0 { Divider().frame(height: 44).padding(.horizontal, 10) }
+                    VStack(alignment: .leading, spacing: 3) {
+                        let gender = m.gender ?? ""
+                        Text([m.name, gender].filter { !$0.isEmpty }.joined(separator: " "))
+                            .font(.system(size: 10, weight: .semibold))
+                        exportLabeled(tc("本命")) { colored(m.birth) }
+                        if let x = m.xingnian, let gz = x.ganzhi { exportLabeled(tc("行年")) { colored(gz) } }
+                    }
+                    .fixedSize()
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func exportLabeled<V: View>(_ title: String, @ViewBuilder _ v: () -> V) -> some View {
+        HStack(spacing: 6) {
+            Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
+            v().font(.system(size: 12))
+        }
     }
 
     // MARK: - 神煞（按十二支，只列有的）

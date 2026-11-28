@@ -13,6 +13,9 @@ struct BaziChartView: View {
     var annotation: AnyView? = nil
     /// 乾造 / 坤造右边的姓名输入框（笔记里点开时可以改姓名）；八字页面不用，直接显示姓名
     var nameEditor: AnyView? = nil
+    /// 导出 PDF 时画哪一段（nil = 正常页面）：上面的四柱，或下面的大运（可带流年）。
+    var exportPart: ExportPart? = nil
+    enum ExportPart { case pillars, dayun(liunian: Bool) }
 
     private let client = DivinationClient()
 
@@ -24,12 +27,14 @@ struct BaziChartView: View {
     // 藏干区固定高度（最多 3 行），好让四柱纳音落在同一行对齐。
     private let cangganAreaHeight: CGFloat = 64
 
-    init(chart: BaziChart, name: String, birth: Birth, annotation: AnyView? = nil, nameEditor: AnyView? = nil) {
+    init(chart: BaziChart, name: String, birth: Birth, annotation: AnyView? = nil, nameEditor: AnyView? = nil,
+         exportPart: ExportPart? = nil) {
         self.chart = chart
         self.name = name
         self.birth = birth
         self.annotation = annotation
         self.nameEditor = nameEditor
+        self.exportPart = exportPart
         let cur = Calendar.current.component(.year, from: Date())
         _dayunIndex = State(initialValue: Self.defaultDaYunIndex(chart.dayun, currentYear: cur))
     }
@@ -52,6 +57,14 @@ struct BaziChartView: View {
     }
 
     var body: some View {
+        switch exportPart {
+        case .pillars: exportPillars
+        case .dayun(let liunian): exportDayun(liunian: liunian)
+        case nil: page
+        }
+    }
+
+    private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
@@ -239,6 +252,114 @@ struct BaziChartView: View {
             .stroke(selected ? Color.accentColor : .clear, lineWidth: 1.2))
         .contentShape(Rectangle())
         .onTapGesture(perform: tap)
+    }
+
+    // MARK: - 导出 PDF 的版式（A4 正文宽约 511pt，小字号）
+
+    /// 上段：左边姓名、公历农历、起运；右边四柱（不带大运那一柱）。
+    private var exportPillars: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if !name.isEmpty { Text(name).font(.system(size: 16, weight: .bold)) }
+                    Text(chart.gender).font(.system(size: 13))
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("公历：\(chart.inputTime)")
+                    Text("农历：\(chart.lunarTime)")
+                }
+                .font(.system(size: 10.5))
+                Text("起运：\(chart.qiyun.years)岁\(chart.qiyun.months)月\(chart.qiyun.days)日")
+                    .font(.system(size: 10.5))
+                Text(chart.jiaoyun.text).font(.system(size: 10.5))
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            HStack(alignment: .top, spacing: 2) {
+                exportPillar("年柱", chart.pillars.year)
+                exportPillar("月柱", chart.pillars.month)
+                exportPillar("日柱", chart.pillars.day)
+                exportPillar("时柱", chart.pillars.hour)
+            }
+            .fixedSize()
+        }
+    }
+
+    /// 导出用的一根彩色柱（同页面上的柱，字号按纸张缩小）。
+    private func exportPillar(_ label: String, _ p: BaziPillar) -> some View {
+        let chars = Array(p.ganzhi)
+        return VStack(spacing: 3) {
+            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
+            Text(p.ganShishen).font(.system(size: 10))
+            if chars.count >= 1 { GanZhiChar(c: chars[0]).font(.system(size: 22)) }
+            if chars.count >= 2 { GanZhiChar(c: chars[1]).font(.system(size: 22)) }
+            VStack(spacing: 1) {
+                ForEach(p.canggan) { cg in
+                    HStack(spacing: 2) {
+                        GanZhiChar(c: cg.gan.first ?? " ").font(.system(size: 10))
+                        Text(cg.shishen).font(.system(size: 8.5))
+                    }
+                }
+            }
+            .frame(height: 40, alignment: .top)                 // 藏干固定 3 行高，纳音同一行对齐
+            Text(p.nayin).font(.system(size: 9.5))
+        }
+        .frame(width: 58)
+    }
+
+    /// 下段：大运横排（年份、岁数、干支竖排），流年（只写干支）排在对应大运下面。
+    private func exportDayun(liunian: Bool) -> some View {
+        let rows = liunian ? (chart.dayun.map(\.liunian.count).max() ?? 0) : 0
+        return Grid(alignment: .center, horizontalSpacing: 0, verticalSpacing: 2) {
+            GridRow {
+                Color.clear.frame(width: 1, height: 1).gridCellUnsizedAxes([.horizontal, .vertical])
+                ForEach(chart.dayun) { dy in
+                    VStack(spacing: 0) {
+                        Text(String(dy.startYear))
+                        Text("\(dy.startAge)岁").foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 8.5))
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            GridRow {
+                exportRowLabel("大运")
+                ForEach(chart.dayun) { dy in
+                    VStack(spacing: 0) {
+                        ForEach(Array(dy.ganzhi.enumerated()), id: \.offset) { _, c in Text(String(c)) }
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.vertical, 2)
+                }
+            }
+            if rows > 0 {
+                GridRow {
+                    Color.clear.frame(height: 2).gridCellUnsizedAxes(.horizontal)
+                    ForEach(chart.dayun) { _ in Divider().frame(width: 22) }
+                }
+                ForEach(0..<rows, id: \.self) { i in
+                    GridRow {
+                        if i == 0 {
+                            exportRowLabel("流年")                       // 竖排两字往下伸，不撑高第一行
+                                .frame(height: 13, alignment: .top)
+                        } else {
+                            Color.clear.frame(width: 1, height: 1).gridCellUnsizedAxes([.horizontal, .vertical])
+                        }
+                        ForEach(chart.dayun) { dy in
+                            Text(i < dy.liunian.count ? dy.liunian[i].ganzhi : " ").font(.system(size: 10.5))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func exportRowLabel(_ s: String) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(s.enumerated()), id: \.offset) { _, c in Text(String(c)) }
+        }
+        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+        .frame(width: 18)
     }
 
     // MARK: - 工具

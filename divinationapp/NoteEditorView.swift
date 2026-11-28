@@ -31,6 +31,15 @@ struct NoteEditorView: View {
     @State private var finished = false
 
     @State private var title = ""
+    @State private var exporting = false        // 正在导出 PDF
+    @State private var showExportOptions = false
+    #if os(macOS)
+    @State private var exportWindow: NSWindow?
+    @State private var exportHTML = ""                  // 点「导出 PDF」时取的正文
+    @State private var exportTypes: Set<String> = []    // 正文里有哪些排盘（决定设置面板显示哪些选项）
+    #endif
+    @AppStorage(NoteExport.Options.guaTextKey) private var exportGuaText = true   // 导出设置：记住上次的选择
+    @AppStorage(NoteExport.Options.liunianKey) private var exportLiunian = true
     @State private var subjects: [Subject] = []
     @State private var labels: [NoteLabel] = []
     @State private var shushu: [Shushu] = []            // 用了哪些术数（按清单顺序）
@@ -152,10 +161,17 @@ struct NoteEditorView: View {
                     .disabled(noteId == nil)
                 Button("插入排盘") { requestInsertChart() }
                     .disabled(noteId == nil)
+                #if os(macOS)
+                Button(exporting ? "导出中…" : "导出 PDF") { startExport() }
+                    .disabled(noteId == nil || exporting)
+                #endif
                 Button("保存") { save() }
                     .disabled(noteId == nil || !isDirty)
             }
         }
+        #if os(macOS)
+        .sheet(isPresented: $showExportOptions) { exportOptionsSheet }
+        #endif
         .alert("把这篇笔记移到回收站？", isPresented: $confirmTrash) {
             Button("移到回收站", role: .destructive) { moveToTrash() }
             Button("取消", role: .cancel) {}
@@ -267,6 +283,54 @@ struct NoteEditorView: View {
     }
 
     /// 「插入排盘」：光标在正文里才打开排盘面板，排完插到光标处；否则提示先在正文里点一下。
+    #if os(macOS)
+    /// 导出 PDF：正文照编辑器里的样子，排盘换成完整排盘的图片（见 NoteExport）。
+    /// 点「导出 PDF」：先取正文、看里面有哪些排盘。有可选项的（易经类、八字）才弹设置面板，没有就直接导出。
+    private func startExport() {
+        exportWindow = NSApp.keyWindow           // 笔记窗口（弹出设置后 keyWindow 就是设置面板了）
+        Task { @MainActor in
+            guard let html = await editor.currentHTML() else { return }
+            exportHTML = html
+            exportTypes = NoteExport.chartTypes(inHTML: html, client: client)
+            if hasGuaCharts || hasBazi { showExportOptions = true } else { exportPDF() }
+        }
+    }
+
+    private var hasGuaCharts: Bool { !exportTypes.isDisjoint(with: ["iching", "meihua"]) }
+    private var hasBazi: Bool { exportTypes.contains("bazi") }
+
+    private func exportPDF() {
+        showExportOptions = false
+        let window = exportWindow
+        let html = exportHTML
+        Task { @MainActor in
+            exporting = true
+            await NoteExport.run(title: title, bodyHTML: html,
+                                 options: .init(wuxingColor: chartWuxingColor, guaText: exportGuaText, liunian: exportLiunian), window: window)
+            exporting = false
+        }
+    }
+
+    /// 导出设置：点「导出 PDF」先弹出来。
+    private var exportOptionsSheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("导出 PDF").font(.headline)
+            // 只列这篇笔记里有的排盘的选项
+            if hasGuaCharts { Toggle("易经速查、梅花易数写出卦辞爻辞", isOn: $exportGuaText) }
+            if hasBazi { Toggle("八字在大运下面列出流年", isOn: $exportLiunian) }
+            HStack {
+                Spacer()
+                Button("取消") { showExportOptions = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("导出…") { exportPDF() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
+    }
+    #endif
+
     private func requestInsertChart() {
         Task {
             if await editor.cursorInBody() { showInsertChart = true } else { showPickPosition = true }
