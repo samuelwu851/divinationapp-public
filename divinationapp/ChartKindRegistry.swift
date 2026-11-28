@@ -22,6 +22,19 @@ struct ChartKind {
     /// 详情视图：拿到 chart_get 的原始 JSON 自己解码；解不开返回 nil（显示「不支持」）。
     /// 只给内容本身，外面的滚动、边距、五行颜色勾选框由 ChartDetailView 统一加。
     let makeDetail: (_ chartJSON: Data) -> AnyView?
+    /// 导出 PDF 时，设置面板里这种排盘用得上的选项（笔记里有这种排盘才显示）。
+    var exportSettings: Set<ChartExportSetting> = []
+    /// 导出 PDF 用的版式：拆成几段图（上下紧贴，分页只落在段与段之间）。`enabled` 是用户勾上的选项。
+    /// 不给（或返回 nil）就把 `makeDetail` 的视图画成一整张——视图可以读 `\.chartExporting` 换成导出版式（如六壬）。
+    var makeExport: ((_ chartJSON: Data, _ enabled: Set<ChartExportSetting>) -> [AnyView]?)? = nil
+}
+
+/// 导出 PDF 的设置项。
+enum ChartExportSetting: Hashable {
+    /// 写出卦辞爻辞（易经速查、梅花易数，以及注册了它的类型）
+    case guaText
+    /// 八字在大运下面列流年
+    case liunian
 }
 
 @MainActor

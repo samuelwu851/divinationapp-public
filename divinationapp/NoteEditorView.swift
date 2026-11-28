@@ -292,12 +292,12 @@ struct NoteEditorView: View {
             guard let html = await editor.currentHTML() else { return }
             exportHTML = html
             exportTypes = NoteExport.chartTypes(inHTML: html, client: client)
-            if hasGuaCharts || hasBazi { showExportOptions = true } else { exportPDF() }
+            if exportSettings.isEmpty { exportPDF() } else { showExportOptions = true }
         }
     }
 
-    private var hasGuaCharts: Bool { !exportTypes.isDisjoint(with: ["iching", "meihua"]) }
-    private var hasBazi: Bool { exportTypes.contains("bazi") }
+    /// 正文里的排盘用得上的导出选项（没有就不弹设置面板）
+    private var exportSettings: Set<ChartExportSetting> { NoteExport.settings(forTypes: exportTypes) }
 
     private func exportPDF() {
         showExportOptions = false
@@ -316,8 +316,8 @@ struct NoteEditorView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("导出 PDF").font(.headline)
             // 只列这篇笔记里有的排盘的选项
-            if hasGuaCharts { Toggle("易经速查、梅花易数写出卦辞爻辞", isOn: $exportGuaText) }
-            if hasBazi { Toggle("八字在大运下面列出流年", isOn: $exportLiunian) }
+            if exportSettings.contains(.guaText) { Toggle("写出卦辞爻辞", isOn: $exportGuaText) }
+            if exportSettings.contains(.liunian) { Toggle("八字在大运下面列出流年", isOn: $exportLiunian) }
             HStack {
                 Spacer()
                 Button("取消") { showExportOptions = false }

@@ -24,6 +24,27 @@ enum NoteExport {
         /// 记住上次的选择
         static let guaTextKey = "noteExportGuaText"
         static let liunianKey = "noteExportLiunian"
+
+        /// 勾上的选项（传给注册表里的类型）
+        var enabled: Set<ChartExportSetting> {
+            var s = Set<ChartExportSetting>()
+            if guaText { s.insert(.guaText) }
+            if liunian { s.insert(.liunian) }
+            return s
+        }
+    }
+
+    /// 正文里这些类型的排盘用得上哪些导出选项（决定设置面板显示什么；空的就不弹设置面板）。
+    static func settings(forTypes types: Set<String>) -> Set<ChartExportSetting> {
+        var s = Set<ChartExportSetting>()
+        for t in types {
+            switch t {
+            case "iching", "meihua": s.insert(.guaText)
+            case "bazi": s.insert(.liunian)
+            default: s.formUnion(ChartKindRegistry.kind(for: t)?.exportSettings ?? [])
+            }
+        }
+        return s
     }
 
     /// 弹保存框，导出成 PDF。失败时弹提示。
@@ -82,7 +103,7 @@ enum NoteExport {
     /// 一个排盘：图片（按 A4 正文宽专门排的版式，原尺寸放进来），下面是所问之事 + 特点（同笔记里卡片下面那一行）。
     private static func chartBlock(id: Int, client: DivinationClient, options: Options) -> String {
         let data = client.chartGet(id: id)
-        let pieces = ChartExport.pieces(ChartDetailView.load(data), client: client, options: options)
+        let pieces = ChartExport.pieces(ChartDetailView.load(data), data: data, client: client, options: options)
         let imgs = pieces.enumerated().compactMap { i, p in
             ChartExport.png(p, first: i == 0, last: i == pieces.count - 1, wuxingColor: options.wuxingColor).map { png, w in
                 // 窄图（如不写卦辞的单卦）：按原尺寸居中；其他铺满正文宽
@@ -232,13 +253,14 @@ enum ChartExport {
         var compact = false
     }
 
-    static func pieces(_ loaded: ChartDetailView.Loaded, client: DivinationClient, options: NoteExport.Options) -> [Piece] {
+    /// data：chart_get 的原始 JSON（注册表里的类型自己解码）。
+    static func pieces(_ loaded: ChartDetailView.Loaded, data: Data?, client: DivinationClient, options: NoteExport.Options) -> [Piece] {
         var compact = false
         if case .iching(_, let org, let chg, _, _) = loaded, org.lines == chg.lines, !options.guaText { compact = true }
-        return raw(loaded, client: client, options: options).map { Piece(view: $0, compact: compact) }
+        return raw(loaded, data: data, client: client, options: options).map { Piece(view: $0, compact: compact) }
     }
 
-    private static func raw(_ loaded: ChartDetailView.Loaded, client: DivinationClient, options: NoteExport.Options) -> [AnyView] {
+    private static func raw(_ loaded: ChartDetailView.Loaded, data: Data?, client: DivinationClient, options: NoteExport.Options) -> [AnyView] {
         let guaText = options.guaText
         switch loaded {
         case .bazi(let chart, let name, let birth):
@@ -251,14 +273,15 @@ enum ChartExport {
         case .iching(_, let org, let chg, let yilin, let cangua):
             let cg = cangua ?? client.cangua(org: org.value, chg: chg.value)
             let view = AnyView(GuaExportView(title: "易经速查", org: org, chg: chg, yilin: yilin, cangua: cg, showText: guaText))
-            return [view] + (guaText ? guaTextPieces(org, chg, cg) : [])
+            return [view] + (guaText ? dualGuaTextPieces(org, chg, cg) : [])
         case .meihua(let bazi, let methodText, let org, let chg, let yilin, let cangua):
             let cg = cangua ?? client.cangua(org: org.value, chg: chg.value)
             return [AnyView(GuaExportView(title: "梅花易数", bazi: bazi, methodText: methodText, org: org, chg: chg,
                                           yilin: yilin, cangua: cg, showText: guaText))]
-                + (guaText ? guaTextPieces(org, chg, cg) : [])
-        case .registered(_, let view):
-            return [view]                    // 视图自己读 \.chartExporting 换成导出版式（如六壬）
+                + (guaText ? dualGuaTextPieces(org, chg, cg) : [])
+        case .registered(let kind, let view):
+            if let data, let pieces = kind.makeExport?(data, options.enabled) { return pieces }
+            return [view]                    // 没有专门的导出版式：视图自己读 \.chartExporting 换版式（如六壬）
         case .unsupported, .missing:
             return []
         }
@@ -435,7 +458,8 @@ private struct GuaExportView: View {
 }
 
 /// 易经类的卦辞爻辞：图里出现的每个卦一段。同一个卦出现几次只写一次，身份并在一起（如「本卦错卦 · 本卦综卦」）。
-private struct GuaText: Identifiable {
+/// 注册表里的类型（如别的术数）也可以用：`collect(_:)` 收卦，`ChartExport.guaTextPieces(_:)` 排成图。
+struct GuaText: Identifiable {
     var roles: [String]
     let name: String
     let palace: Palace?
@@ -443,11 +467,25 @@ private struct GuaText: Identifiable {
     let text: HexagramText
     var id: String { name }
 
+    /// 按顺序收一串卦，每个卦连同它的错综互（身份写成「会卦错卦」这样）。重复的卦只留第一次，身份并进去。
+    static func collect(_ items: [(role: String, hexagram: Hexagram)]) -> [GuaText] {
+        var out: [GuaText] = []
+        for (role, h) in items {
+            add(&out, role, h.name, h.palace, h.lines, h.hexagramText)
+            for d in h.derived { add(&out, "\(role)\(d.label)", d.name, d.palace, d.lines, d.text) }
+        }
+        return out
+    }
+
+    private static func add(_ out: inout [GuaText], _ role: String, _ name: String, _ palace: Palace?, _ lines: [Int], _ text: HexagramText) {
+        if let i = out.firstIndex(where: { $0.name == name }) { out[i].roles.append(role) }
+        else { out.append(GuaText(roles: [role], name: name, palace: palace, lines: lines, text: text)) }
+    }
+
     static func collect(_ org: Hexagram, _ chg: Hexagram, _ cangua: [CanGuaGroup]) -> [GuaText] {
         var out: [GuaText] = []
         func add(_ role: String, _ name: String, _ palace: Palace?, _ lines: [Int], _ text: HexagramText) {
-            if let i = out.firstIndex(where: { $0.name == name }) { out[i].roles.append(role) }
-            else { out.append(GuaText(roles: [role], name: name, palace: palace, lines: lines, text: text)) }
+            Self.add(&out, role, name, palace, lines, text)
         }
         let dual = org.lines != chg.lines
         add("本卦", org.name, org.palace, org.lines, org.hexagramText)
@@ -519,15 +557,21 @@ private struct GuaTextGrid: View {
 
 /// 有动爻时卦图下面的卦辞爻辞：一行两个卦，每行一段图片（分页落在行与行之间）。
 @MainActor
-private func guaTextPieces(_ org: Hexagram, _ chg: Hexagram, _ cangua: [CanGuaGroup]) -> [AnyView] {
+private func dualGuaTextPieces(_ org: Hexagram, _ chg: Hexagram, _ cangua: [CanGuaGroup]) -> [AnyView] {
     guard org.lines != chg.lines else { return [] }       // 单卦的卦辞爻辞在卦图右边
-    let items = GuaText.collect(org, chg, cangua)
-    return stride(from: 0, to: items.count, by: 2).map { start in
-        let row = Array(items[start..<min(start + 2, items.count)])
-        return AnyView(VStack(spacing: 8) {
-            if start == 0 { Divider() }                     // 和卦图隔开
-            GuaTextGrid(items: row, columns: 2)
-        }.padding(.top, start == 0 ? 0 : 4))
+    return ChartExport.guaTextPieces(GuaText.collect(org, chg, cangua))
+}
+
+extension ChartExport {
+    /// 卦辞爻辞排成图：一行两个卦，每行一段（分页落在行与行之间），第一段上面有分隔线和上面的图隔开。
+    static func guaTextPieces(_ items: [GuaText]) -> [AnyView] {
+        stride(from: 0, to: items.count, by: 2).map { start in
+            let row = Array(items[start..<min(start + 2, items.count)])
+            return AnyView(VStack(spacing: 8) {
+                if start == 0 { Divider() }                     // 和卦图隔开
+                GuaTextGrid(items: row, columns: 2)
+            }.padding(.top, start == 0 ? 0 : 4))
+        }
     }
 }
 
